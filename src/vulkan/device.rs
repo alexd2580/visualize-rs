@@ -72,7 +72,7 @@ impl Device {
         .expect("Failed to begin command buffer.");
     }
 
-    pub fn bind_pipeline(&self, pipeline: &Pipeline) {
+    pub fn bind_pipeline<PC>(&self, pipeline: &Pipeline<PC>) {
         unsafe {
             self.device.cmd_bind_pipeline(
                 self.command_buffer,
@@ -119,10 +119,15 @@ impl Device {
             .expect("Failed to end command buffer.");
     }
 
-    pub fn queue_submit(&self, wait_semaphore: &Semaphore, signal_semaphore: &Semaphore, reuse_command_buffer_fence: &Fence) {
+    pub fn queue_submit(
+        &self,
+        wait_semaphore: Option<&Semaphore>,
+        signal_semaphore: Option<&Semaphore>,
+        reuse_command_buffer_fence: &Fence,
+    ) {
         let command_buffers = [self.command_buffer];
-        let wait_semaphores = [**wait_semaphore];
-        let signal_semaphores = [**signal_semaphore];
+        let wait_semaphores = Vec::from_iter(wait_semaphore.into_iter().map(|sem| **sem));
+        let signal_semaphores = Vec::from_iter(signal_semaphore.into_iter().map(|sem| **sem));
 
         let submit_info = vk::SubmitInfo::builder()
             .command_buffers(&command_buffers)

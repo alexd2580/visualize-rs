@@ -13,9 +13,9 @@ use super::{
 pub struct Swapchain {
     device: Rc<Device>,
     swapchain_loader: extensions::khr::Swapchain,
-    swapchain: vk::SwapchainKHR,
+    pub swapchain: vk::SwapchainKHR,
     pub image_subresource_range: vk::ImageSubresourceRange,
-    images: Vec<vk::Image>,
+    pub images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
     sampler: vk::Sampler,
 }
@@ -26,9 +26,9 @@ impl Swapchain {
         device: Rc<Device>,
         surface: &Surface,
         surface_info: &SurfaceInfo,
+        old_swapchain: Option<vk::SwapchainKHR>,
     ) -> Result<Swapchain, Error> {
         let surface_format = &surface_info.surface_format;
-        dbg!(surface_info);
 
         let swapchain_loader = extensions::khr::Swapchain::new(&instance.instance, &device);
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
@@ -43,7 +43,8 @@ impl Swapchain {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(surface_info.desired_present_mode)
             .clipped(true)
-            .image_array_layers(1);
+            .image_array_layers(1)
+            .old_swapchain(old_swapchain.unwrap_or(vk::SwapchainKHR::null()));
 
         let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None) }
             .map_err(Error::VkError)?;

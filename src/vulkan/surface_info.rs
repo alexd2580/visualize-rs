@@ -1,4 +1,4 @@
-use crate::{error::Error, window::Window};
+use crate::error::Error;
 use ash::vk;
 
 use super::{physical_device::PhysicalDevice, surface::Surface};
@@ -14,13 +14,12 @@ pub struct SurfaceInfo {
 
 impl SurfaceInfo {
     pub fn new(
-        window: &Window,
+        (width, height): (u32, u32),
         physical_device: &PhysicalDevice,
         surface: &Surface,
     ) -> Result<Self, Error> {
         let (surface_formats, surface_capabilities, present_modes) =
             surface.get_formats_capabilities_present_modes(physical_device)?;
-        dbg!(&surface_formats);
         let surface_format = surface_formats[0];
 
         // For reference see:
@@ -50,10 +49,7 @@ impl SurfaceInfo {
         }
 
         let surface_resolution = match surface_capabilities.current_extent.width {
-            std::u32::MAX => vk::Extent2D {
-                width: window.width,
-                height: window.height,
-            },
+            std::u32::MAX => vk::Extent2D { width, height },
             _ => surface_capabilities.current_extent,
         };
 

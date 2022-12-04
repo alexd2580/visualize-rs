@@ -1,4 +1,3 @@
-// mod audio;
 mod error;
 mod vulkan;
 mod window;
@@ -13,17 +12,10 @@ fn main() {
     let mut window = window::Window::new(1280, 1024).expect("Failed to open window");
     let mut vulkan = vulkan::Vulkan::new(&window).expect("Failed to initialize vulkan");
 
-    let mut main_loop = || {
-        vulkan.recompile_shader_if_modified();
-        vulkan.render_next_frame();
-        // vulkan.num_frames < 100
-        true
-    };
+    log::info!("Running");
 
-    window.run_main_loop(&mut main_loop);
+    window.run_main_loop(&mut vulkan);
     vulkan.wait_idle();
 
-    // let audio = init_audio();
-
-    // let mut x = 0;
+    log::info!("Terminating");
 }

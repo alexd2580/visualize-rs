@@ -3,18 +3,17 @@ use ash::vk::{self, ShaderStageFlags};
 
 use log::debug;
 
-use std::{ops::Deref, rc::Rc};
+use std::{marker::PhantomData, mem, ops::Deref, rc::Rc};
 
 use super::{device::Device, shader_module::ShaderModule};
 
 unsafe fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::std::slice::from_raw_parts(
-        (p as *const T) as *const u8,
-        ::std::mem::size_of::<T>(),
-    )
+    ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
 }
 
-pub struct Pipeline {
+pub struct Pipeline<PushConstants> {
+    _push_constants: PhantomData<PushConstants>,
+
     device: Rc<Device>,
     pipeline_layout: vk::PipelineLayout,
     compute_pipeline: vk::Pipeline,
@@ -23,7 +22,7 @@ pub struct Pipeline {
     pub descriptor_sets: Vec<vk::DescriptorSet>,
 }
 
-impl Pipeline {
+impl<PushConstants> Pipeline<PushConstants> {
     fn create_descriptor_set_layout(
         device: &ash::Device,
     ) -> Result<vk::DescriptorSetLayout, Error> {
@@ -44,9 +43,10 @@ impl Pipeline {
         device: &ash::Device,
         descriptor_set_layout: &vk::DescriptorSetLayout,
     ) -> Result<vk::PipelineLayout, Error> {
+        let push_constants_size = mem::size_of::<PushConstants>() as u32;
         let push_constant_range = vk::PushConstantRange::builder()
             .stage_flags(vk::ShaderStageFlags::COMPUTE)
-            .size(4)
+            .size(push_constants_size)
             .offset(0)
             .build();
         let push_constant_ranges = [push_constant_range];
@@ -67,7 +67,7 @@ impl Pipeline {
             .layout(*pipeline_layout)
             .build();
         let pipelines = unsafe {
-            device.device.create_compute_pipelines(
+            device.create_compute_pipelines(
                 vk::PipelineCache::null(),
                 &[compute_pipeline_create_info],
                 None,
@@ -125,6 +125,7 @@ impl Pipeline {
             Self::create_descriptor_sets(&device, descriptor_pool, descriptor_set_layout)?;
 
         Ok(Pipeline {
+            _push_constants: PhantomData,
             device,
             pipeline_layout,
             compute_pipeline,
@@ -134,8 +135,8 @@ impl Pipeline {
         })
     }
 
-    pub fn push_constants(&self, value: u32) {
-        let constants = unsafe { as_u8_slice(&value) };
+    pub fn push_constants(&self, push_constants: &PushConstants) {
+        let constants = unsafe { as_u8_slice(push_constants) };
         unsafe {
             self.device.cmd_push_constants(
                 self.device.command_buffer,
@@ -182,7 +183,7 @@ impl Pipeline {
 //     unsafe { device.update_descriptor_sets(&write_descriptor_sets, &[]) };
 //
 
-impl Deref for Pipeline {
+impl<PC> Deref for Pipeline<PC> {
     type Target = vk::Pipeline;
 
     fn deref(&self) -> &Self::Target {
@@ -190,7 +191,7 @@ impl Deref for Pipeline {
     }
 }
 
-impl Drop for Pipeline {
+impl<PC> Drop for Pipeline<PC> {
     fn drop(&mut self) {
         debug!("Dropping Pipeline");
 

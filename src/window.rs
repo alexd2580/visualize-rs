@@ -1,15 +1,14 @@
-extern crate ash;
 extern crate ash_window;
-extern crate libpulse_binding as pulse;
 extern crate raw_window_handle;
 extern crate winit;
 
 use crate::vulkan::instance::Instance;
 use ash::vk::SurfaceKHR as VkSurface;
-use log::debug;
+use log::{debug, error};
 
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
+    dpi::PhysicalSize,
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
@@ -17,6 +16,11 @@ use winit::{
 };
 
 use crate::error::Error;
+
+pub trait App {
+    fn run_frame(&mut self) -> ControlFlow;
+    fn handle_resize(&mut self, new_size: (u32, u32)) -> Result<(), Error>;
+}
 
 pub struct Window {
     pub width: u32,
@@ -31,11 +35,11 @@ impl Window {
 
         let event_loop = EventLoop::new();
         let size = winit::dpi::LogicalSize::new(width, height);
-        let window_or_err = WindowBuilder::new()
+        let window = WindowBuilder::new()
             .with_title("visualize-rs")
             .with_inner_size(size)
-            .build(&event_loop);
-        let window = window_or_err.map_err(Error::OsError)?;
+            .build(&event_loop)
+            .map_err(Error::OsError)?;
 
         Ok(Window {
             width,
@@ -65,12 +69,7 @@ impl Window {
         .map_err(Error::VkError)
     }
 
-    fn handle_event(
-        event: Event<()>,
-        control_flow: &mut ControlFlow,
-        run_logic: &mut dyn FnMut() -> bool,
-    ) {
-        *control_flow = ControlFlow::Poll;
+    fn handle_event<T: App>(event: Event<()>, app: &mut T) -> ControlFlow {
         match event {
             Event::WindowEvent {
                 event:
@@ -85,19 +84,24 @@ impl Window {
                         ..
                     },
                 ..
-            } => *control_flow = ControlFlow::Exit,
-            Event::MainEventsCleared => {
-                if !run_logic() {
-                    *control_flow = ControlFlow::Exit;
+            } => ControlFlow::Exit,
+            Event::WindowEvent {
+                event: WindowEvent::Resized(PhysicalSize { width, height }),
+                ..
+            } => match app.handle_resize((width, height)) {
+                Ok(()) => ControlFlow::Poll,
+                Err(error) => {
+                    error!("Failed to handle window resize: {:?}", error);
+                    ControlFlow::ExitWithCode(1)
                 }
-            }
-            _ => (),
+            },
+            Event::MainEventsCleared => app.run_frame(),
+            _ => ControlFlow::Poll,
         }
     }
 
-    pub fn run_main_loop(&mut self, run_logic: &mut dyn FnMut() -> bool) {
-        self.event_loop.run_return(|event, &_, control_flow| {
-            Window::handle_event(event, control_flow, run_logic)
-        });
+    pub fn run_main_loop<T: App>(&mut self, app: &mut T) {
+        self.event_loop
+            .run_return(|event, &_, control_flow| *control_flow = Window::handle_event(event, app));
     }
 }

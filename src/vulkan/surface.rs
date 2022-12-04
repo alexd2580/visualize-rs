@@ -1,9 +1,3 @@
-extern crate ash;
-extern crate ash_window;
-extern crate libpulse_binding as pulse;
-extern crate raw_window_handle;
-extern crate winit;
-
 use crate::{vulkan::instance::Instance, window::Window};
 use ash::{extensions, vk};
 use log::debug;

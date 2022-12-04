@@ -1,8 +1,4 @@
 extern crate ash;
-extern crate ash_window;
-extern crate libpulse_binding as pulse;
-extern crate raw_window_handle;
-extern crate winit;
 
 mod device;
 mod fence;
@@ -24,22 +20,32 @@ use self::{
 use crate::{
     error::Error,
     vulkan::{pipeline::Pipeline, surface_info::SurfaceInfo},
-    window::Window,
+    window::{App, Window},
 };
 
 use ash::vk;
 use log::{debug, error, info, warn};
+use winit::event_loop::ControlFlow;
+
+struct PushConstants {
+    num_frames: u32,
+}
 
 // Define fields in reverse drop order.
 pub struct Vulkan {
+    push_constants: PushConstants,
+
+    window_size: (u32, u32),
     pub num_frames: u32,
+    stale_image_layout: bool,
+    stale_swapchain: bool,
 
     image_acquired_semaphore: Semaphore,
     compute_complete_semaphore: Semaphore,
 
     reuse_command_buffer_fence: Fence,
 
-    pipeline: Pipeline,
+    pipeline: Pipeline<PushConstants>,
     compute_shader_module: ShaderModule,
     swapchain: Swapchain,
     surface_info: SurfaceInfo,
@@ -59,8 +65,9 @@ impl Vulkan {
 
         let device = Rc::new(Device::new(&instance, &physical_device)?);
 
-        let surface_info = SurfaceInfo::new(window, &physical_device, &surface)?;
-        let swapchain = Swapchain::new(&instance, device.clone(), &surface, &surface_info)?;
+        let window_size = (window.width, window.height);
+        let surface_info = SurfaceInfo::new(window_size, &physical_device, &surface)?;
+        let swapchain = Swapchain::new(&instance, device.clone(), &surface, &surface_info, None)?;
 
         let compute_shader_module = ShaderModule::new(device.clone())?;
 
@@ -71,6 +78,8 @@ impl Vulkan {
 
         let image_acquired_semaphore = Semaphore::new(device.clone())?;
         let compute_complete_semaphore = Semaphore::new(device.clone())?;
+
+        let push_constants = PushConstants { num_frames: 0 };
 
         Ok(Vulkan {
             instance,
@@ -84,7 +93,12 @@ impl Vulkan {
             reuse_command_buffer_fence,
             image_acquired_semaphore,
             compute_complete_semaphore,
+            window_size,
             num_frames: 0,
+            // Images are in undefined layout when created.
+            stale_image_layout: true,
+            stale_swapchain: false,
+            push_constants,
         })
     }
 
@@ -119,21 +133,59 @@ impl Vulkan {
         }
     }
 
-    fn reinitialize_after_resize(&mut self, window: &Window) {
-        info!("Reinitializing surface after resize");
+    pub fn reinitialize_after_resize(&mut self) -> Result<(), Error> {
+        info!(
+            "Reinitializing surface after resize to {:?}",
+            self.window_size
+        );
 
-        let surface = Surface::new(&self.instance, window)?;
-        let physical_device = PhysicalDevice::new(&self.instance, &surface)?;
+        self.wait_idle();
 
-        let device = Rc::new(Device::new(&instance, &physical_device)?);
+        let surface_info =
+            SurfaceInfo::new(self.window_size, &self.physical_device, &self.surface)?;
+        let swapchain = Swapchain::new(
+            &self.instance,
+            self.device.clone(),
+            &self.surface,
+            &surface_info,
+            Some(self.swapchain.swapchain),
+        )?;
 
-        let surface_info = SurfaceInfo::new(window, &physical_device, &surface)?;
-        let swapchain = Swapchain::new(&instance, device.clone(), &surface, &surface_info)?;
+        self.swapchain = swapchain;
+        self.surface_info = surface_info;
 
-        swapchain.initialize_descriptor_sets(&pipeline.descriptor_sets);
+        self.swapchain
+            .initialize_descriptor_sets(&self.pipeline.descriptor_sets);
+
+        Ok(())
+    }
+
+    pub fn transition_images_to_present(&self) {
+        debug!("Transitioning image layout from undefined");
+
+        self.reuse_command_buffer_fence.wait();
+        self.reuse_command_buffer_fence.reset();
+
+        self.device.begin_command_buffer();
+        self.device.bind_pipeline(&self.pipeline);
+
+        for image in self.swapchain.images.iter() {
+            self.device.image_memory_barrier_layout_transition(
+                *image,
+                self.swapchain.image_subresource_range,
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::PRESENT_SRC_KHR,
+            );
+        }
+
+        self.device.end_command_buffer();
+        self.device
+            .queue_submit(None, None, &self.reuse_command_buffer_fence);
     }
 
     pub fn render_next_frame(&mut self) {
+        self.push_constants.num_frames = self.num_frames;
+
         let (present_index, present_image) = self
             .swapchain
             .acquire_next_image(*self.image_acquired_semaphore);
@@ -145,20 +197,14 @@ impl Vulkan {
         self.device.bind_pipeline(&self.pipeline);
 
         // Transition image to "GENERAL" layout.
-        let source_layout = if self.num_frames > self.surface_info.desired_image_count {
-            vk::ImageLayout::PRESENT_SRC_KHR
-        } else {
-            vk::ImageLayout::UNDEFINED
-        };
-
         self.device.image_memory_barrier_layout_transition(
             present_image,
             self.swapchain.image_subresource_range,
-            source_layout,
+            vk::ImageLayout::PRESENT_SRC_KHR,
             vk::ImageLayout::GENERAL,
         );
 
-        self.pipeline.push_constants(self.num_frames);
+        self.pipeline.push_constants(&self.push_constants);
         self.pipeline.bind_descriptor_set(present_index);
         self.device.dispatch(100, 100, 1);
 
@@ -172,8 +218,8 @@ impl Vulkan {
 
         self.device.end_command_buffer();
         self.device.queue_submit(
-            &self.image_acquired_semaphore,
-            &self.compute_complete_semaphore,
+            Some(&self.image_acquired_semaphore),
+            Some(&self.compute_complete_semaphore),
             &self.reuse_command_buffer_fence,
         );
 
@@ -195,5 +241,34 @@ impl Vulkan {
 
     pub fn wait_idle(&self) {
         unsafe { self.device.device_wait_idle() }.expect("Failed to wait for device idle")
+    }
+}
+
+impl App for Vulkan {
+    fn run_frame(&mut self) -> ControlFlow {
+        if self.stale_swapchain {
+            if let Err(error) = self.reinitialize_after_resize() {
+                error!("Failed to reinitialize pipeline after resize: {:?}", error);
+                return ControlFlow::ExitWithCode(1);
+            }
+            self.stale_image_layout = true;
+            self.stale_swapchain = false;
+        }
+
+        // Initially and after a resize, the image layout is stale.
+        if self.stale_image_layout {
+            self.transition_images_to_present();
+            self.stale_image_layout = false;
+        }
+
+        self.recompile_shader_if_modified();
+        self.render_next_frame();
+        ControlFlow::Poll
+    }
+
+    fn handle_resize(&mut self, new_size: (u32, u32)) -> Result<(), Error> {
+        self.window_size = new_size;
+        self.stale_swapchain = true;
+        Ok(())
     }
 }
