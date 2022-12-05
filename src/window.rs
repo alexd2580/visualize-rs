@@ -1,7 +1,3 @@
-extern crate ash_window;
-extern crate raw_window_handle;
-extern crate winit;
-
 use crate::vulkan::instance::Instance;
 use ash::vk::SurfaceKHR as VkSurface;
 use log::{debug, error};
@@ -39,7 +35,7 @@ impl Window {
             .with_title("visualize-rs")
             .with_inner_size(size)
             .build(&event_loop)
-            .map_err(Error::OsError)?;
+            .map_err(Error::Os)?;
 
         Ok(Window {
             width,
@@ -52,7 +48,7 @@ impl Window {
     pub fn enumerate_required_extensions(&self) -> Result<Vec<*const i8>, Error> {
         let raw_handle = self.window.raw_display_handle();
         let extensions_vk = ash_window::enumerate_required_extensions(raw_handle);
-        let extensions = extensions_vk.map_err(Error::VkError)?;
+        let extensions = extensions_vk.map_err(Error::Vk)?;
         Ok(extensions.to_vec())
     }
 
@@ -66,7 +62,7 @@ impl Window {
                 None,
             )
         }
-        .map_err(Error::VkError)
+        .map_err(Error::Vk)
     }
 
     fn handle_event<T: App>(event: Event<()>, app: &mut T) -> ControlFlow {

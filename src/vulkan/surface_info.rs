@@ -27,14 +27,14 @@ impl SurfaceInfo {
         let desired_present_mode = present_modes
             .into_iter()
             .find(|&mode| mode == vk::PresentModeKHR::FIFO)
-            .ok_or_else(|| Error::LocalError("There is no vsync present mode".to_owned()))?;
+            .ok_or_else(|| Error::Local("There is no vsync present mode".to_owned()))?;
 
         // Check that the surface supports storage write/can be used in compute shaders.
         if !surface_capabilities
             .supported_usage_flags
             .contains(vk::ImageUsageFlags::STORAGE)
         {
-            return Err(Error::LocalError(
+            return Err(Error::Local(
                 "Surface cannot be used for storage".to_owned(),
             ));
         }

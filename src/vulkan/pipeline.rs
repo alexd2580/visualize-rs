@@ -36,7 +36,7 @@ impl<PushConstants> Pipeline<PushConstants> {
         let descriptor_set_layout_create_info =
             vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
         unsafe { device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None) }
-            .map_err(Error::VkError)
+            .map_err(Error::Vk)
     }
 
     fn create_compute_pipeline_layout(
@@ -54,7 +54,7 @@ impl<PushConstants> Pipeline<PushConstants> {
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constant_ranges)
             .set_layouts(&descriptor_set_layouts);
-        unsafe { device.create_pipeline_layout(&layout_create_info, None) }.map_err(Error::VkError)
+        unsafe { device.create_pipeline_layout(&layout_create_info, None) }.map_err(Error::Vk)
     }
 
     fn create_compute_pipeline(
@@ -73,7 +73,7 @@ impl<PushConstants> Pipeline<PushConstants> {
                 None,
             )
         }
-        .map_err(|(_pipeline, result)| Error::VkError(result))?;
+        .map_err(|(_pipeline, result)| Error::Vk(result))?;
         // TODO delete pipeline?
 
         Ok(pipelines[0])
@@ -93,7 +93,7 @@ impl<PushConstants> Pipeline<PushConstants> {
             .pool_sizes(&descriptor_pool_sizes)
             .max_sets(set_count); // TODO
 
-        unsafe { device.create_descriptor_pool(&*pool_create_info, None) }.map_err(Error::VkError)
+        unsafe { device.create_descriptor_pool(&pool_create_info, None) }.map_err(Error::Vk)
     }
 
     fn create_descriptor_sets(
@@ -106,8 +106,7 @@ impl<PushConstants> Pipeline<PushConstants> {
             .descriptor_pool(descriptor_pool)
             .set_layouts(descriptor_set_layouts.as_slice());
 
-        unsafe { device.allocate_descriptor_sets(&descriptor_set_allocate_info) }
-            .map_err(Error::VkError)
+        unsafe { device.allocate_descriptor_sets(&descriptor_set_allocate_info) }.map_err(Error::Vk)
     }
 
     pub fn new(device: Rc<Device>, compute_shader: &ShaderModule) -> Result<Self, Error> {

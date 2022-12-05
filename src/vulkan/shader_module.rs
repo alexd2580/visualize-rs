@@ -1,5 +1,3 @@
-extern crate filetime;
-
 use ash::vk;
 
 use filetime::FileTime;
@@ -9,7 +7,7 @@ use std::{
     ffi::CStr,
     fs,
     io::{self, Cursor},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     rc::Rc,
     slice,
@@ -71,7 +69,7 @@ pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
     Ok(result)
 }
 
-fn compile_shader_file(file: &PathBuf) -> io::Result<Vec<u32>> {
+fn compile_shader_file(file: &Path) -> io::Result<Vec<u32>> {
     let res = Command::new("glslc")
         .args([file.to_str().unwrap(), "-o", "shaders/out.spv"])
         .output()?;
@@ -93,21 +91,21 @@ pub struct ShaderModule {
 }
 
 impl ShaderModule {
-    fn mtime(path: &PathBuf) -> Result<FileTime, Error> {
-        let source_metadata = path.metadata().map_err(Error::IoError)?;
+    fn mtime(path: &Path) -> Result<FileTime, Error> {
+        let source_metadata = path.metadata().map_err(Error::Io)?;
         Ok(FileTime::from_last_modification_time(&source_metadata))
     }
 
-    fn build(device: &Rc<Device>, source_path: &PathBuf) -> Result<ShaderModule, Error> {
+    fn build(device: &Rc<Device>, source_path: &Path) -> Result<ShaderModule, Error> {
         let last_mtime = Self::mtime(source_path)?;
 
         debug!("Compiling shader");
-        let shader_content = compile_shader_file(source_path).map_err(Error::IoError)?;
+        let shader_content = compile_shader_file(source_path).map_err(Error::Io)?;
 
         debug!("Initializing shader module");
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
         let shader_module =
-            unsafe { device.create_shader_module(&shader_info, None) }.map_err(Error::VkError)?;
+            unsafe { device.create_shader_module(&shader_info, None) }.map_err(Error::Vk)?;
 
         let shader_entry_name = unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") };
         let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
@@ -119,7 +117,7 @@ impl ShaderModule {
 
         Ok(ShaderModule {
             device: device.clone(),
-            source_path: source_path.clone(),
+            source_path: source_path.to_path_buf(),
             last_mtime,
             shader_module,
             shader_stage_create_info,

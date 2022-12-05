@@ -39,7 +39,7 @@ fn init_input_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Strea
     let print_error = |err| eprintln!("Audio input error: {}", err);
 
     fn read<T: cpal::Sample>(data: &[T], _: &cpal::InputCallbackInfo) {
-        for sample in data.iter() {}
+        for _sample in data.iter() {}
     }
 
     device

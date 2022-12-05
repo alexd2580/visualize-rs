@@ -5,8 +5,8 @@ use winit::error::OsError;
 
 #[derive(Debug)]
 pub enum Error {
-    LocalError(String),
-    VkError(vk::Result),
-    OsError(OsError),
-    IoError(io::Error),
+    Local(String),
+    Vk(vk::Result),
+    Os(OsError),
+    Io(io::Error),
 }

@@ -20,34 +20,34 @@ fn choose_compute_queue_family(
     }
 }
 
-fn choose_render_queue_family(
-    surface: &Surface,
-    physical_device: vk::PhysicalDevice,
-    (index, queue_family_properties): (usize, &vk::QueueFamilyProperties),
-) -> Option<u32> {
-    let supports_graphics = queue_family_properties
-        .queue_flags
-        .contains(vk::QueueFlags::GRAPHICS);
-    let supports_surface = unsafe {
-        surface.surface_loader.get_physical_device_surface_support(
-            physical_device,
-            index as u32,
-            surface.surface,
-        )
-    }
-    .expect("Failed to get physical device surface support info");
-
-    if supports_graphics && supports_surface {
-        Some(index as u32)
-    } else {
-        None
-    }
-}
+// fn choose_render_queue_family(
+//     surface: &Surface,
+//     physical_device: vk::PhysicalDevice,
+//     (index, queue_family_properties): (usize, &vk::QueueFamilyProperties),
+// ) -> Option<u32> {
+//     let supports_graphics = queue_family_properties
+//         .queue_flags
+//         .contains(vk::QueueFlags::GRAPHICS);
+//     let supports_surface = unsafe {
+//         surface.surface_loader.get_physical_device_surface_support(
+//             physical_device,
+//             index as u32,
+//             surface.surface,
+//         )
+//     }
+//     .expect("Failed to get physical device surface support info");
+//
+//     if supports_graphics && supports_surface {
+//         Some(index as u32)
+//     } else {
+//         None
+//     }
+// }
 
 /// Search for a compute queue and a render queue in a physical device.
 fn choose_physical_device_queue(
     instance: &Instance,
-    surface: &Surface,
+    _surface: &Surface,
     physical_device: vk::PhysicalDevice,
 ) -> Option<(vk::PhysicalDevice, u32)> {
     let queue_family_properties = unsafe {
@@ -76,7 +76,7 @@ impl PhysicalDevice {
         let (physical_device, compute_queue_family_index) = physical_devices
             .into_iter()
             .find_map(|p| choose_physical_device_queue(instance, surface, p))
-            .ok_or_else(|| Error::LocalError("Couldn't find suitable device".to_owned()))?;
+            .ok_or_else(|| Error::Local("Couldn't find suitable device".to_owned()))?;
 
         Ok(PhysicalDevice {
             physical_device,

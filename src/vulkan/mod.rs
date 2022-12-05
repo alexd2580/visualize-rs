@@ -1,5 +1,3 @@
-extern crate ash;
-
 mod device;
 mod fence;
 pub mod instance;
@@ -59,7 +57,7 @@ impl Vulkan {
     pub fn new(window: &Window) -> Result<Self, Error> {
         debug!("Initializing video system");
 
-        let instance = Instance::new(&window)?;
+        let instance = Instance::new(window)?;
         let surface = Surface::new(&instance, window)?;
         let physical_device = PhysicalDevice::new(&instance, &surface)?;
 
@@ -229,11 +227,8 @@ impl Vulkan {
             present_index,
             &self.compute_complete_semaphore,
         );
-        match present_result {
-            Err(Error::VkError(vk::Result::ERROR_OUT_OF_DATE_KHR)) => {
-                // Recreate swapchain and
-            }
-            _ => {}
+        if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) = present_result {
+            // Recreate swapchain and TODO
         }
 
         self.num_frames += 1;

@@ -47,7 +47,7 @@ impl Swapchain {
             .old_swapchain(old_swapchain.unwrap_or(vk::SwapchainKHR::null()));
 
         let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None) }
-            .map_err(Error::VkError)?;
+            .map_err(Error::Vk)?;
 
         let image_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -58,7 +58,7 @@ impl Swapchain {
         };
 
         let images =
-            unsafe { swapchain_loader.get_swapchain_images(swapchain) }.map_err(Error::VkError)?;
+            unsafe { swapchain_loader.get_swapchain_images(swapchain) }.map_err(Error::Vk)?;
 
         let image_views = images
             .iter()
@@ -87,7 +87,7 @@ impl Swapchain {
             ..Default::default()
         };
         let sampler =
-            unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::VkError)?;
+            unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::Vk)?;
 
         Ok(Swapchain {
             device,
@@ -100,7 +100,7 @@ impl Swapchain {
         })
     }
 
-    pub fn initialize_descriptor_sets(&self, descriptor_sets: &Vec<vk::DescriptorSet>) {
+    pub fn initialize_descriptor_sets(&self, descriptor_sets: &[vk::DescriptorSet]) {
         // Can't merge maps, we need to have an adressable list of descimageinfos.
         // For reference see `WriteDescriptorSetBuilder::image_info`.
         let image_infos: Vec<[vk::DescriptorImageInfo; 1]> = self
@@ -168,7 +168,7 @@ impl Swapchain {
                     warn!("Swapchain is suboptimal");
                 }
             })
-            .map_err(Error::VkError)
+            .map_err(Error::Vk)
     }
 }
 

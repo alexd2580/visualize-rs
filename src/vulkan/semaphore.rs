@@ -16,7 +16,7 @@ impl Semaphore {
     pub fn new(device: Rc<Device>) -> Result<Self, Error> {
         let semaphore =
             unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-                .map_err(Error::VkError)?;
+                .map_err(Error::Vk)?;
         Ok(Semaphore { device, semaphore })
     }
 }

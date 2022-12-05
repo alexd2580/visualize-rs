@@ -49,7 +49,7 @@ impl Surface {
                 loader.get_physical_device_surface_capabilities(physical_device, surface),
                 loader.get_physical_device_surface_present_modes(physical_device, surface),
             ))
-            .map_err(Error::VkError)
+            .map_err(Error::Vk)
         }
     }
 }

@@ -23,9 +23,9 @@ impl Instance {
         let extension_names = window.enumerate_required_extensions()?;
 
         // List available layers. TODO check that the validation layer exists.
-        let layer_properties = entry
-            .enumerate_instance_layer_properties()
-            .map_err(Error::VkError)?;
+        // let layer_properties = entry
+        //     .enumerate_instance_layer_properties()
+        //     .map_err(Error::VkError)?;
         let validation_layer =
             unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
         let layer_names = [validation_layer.as_ptr()];
@@ -35,14 +35,13 @@ impl Instance {
             .enabled_extension_names(&extension_names)
             .enabled_layer_names(&layer_names);
 
-        let instance =
-            unsafe { entry.create_instance(&create_info, None) }.map_err(Error::VkError)?;
+        let instance = unsafe { entry.create_instance(&create_info, None) }.map_err(Error::Vk)?;
 
         Ok(Instance { entry, instance })
     }
 
     pub fn enumerate_physical_devices(&self) -> Result<Vec<vk::PhysicalDevice>, Error> {
-        unsafe { self.instance.enumerate_physical_devices() }.map_err(Error::VkError)
+        unsafe { self.instance.enumerate_physical_devices() }.map_err(Error::Vk)
     }
 
     pub fn create_device(&self, physical_device: &PhysicalDevice) -> Result<ash::Device, Error> {
@@ -65,7 +64,7 @@ impl Instance {
             self.instance
                 .create_device(physical_device.physical_device, &device_create_info, None)
         }
-        .map_err(Error::VkError)
+        .map_err(Error::Vk)
     }
 }
 
