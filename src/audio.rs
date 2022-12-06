@@ -4,7 +4,7 @@ use log::debug;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::audio_buffer::AudioBuffer;
+use crate::audio_buffer::{AudioBuffer, AUDIO_BUFFER_SIZE};
 
 fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfigRange>>(
     // This is a newtype for a `range` iterator.
@@ -32,7 +32,7 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
 fn init_input_stream(
     host: &cpal::Host,
     desired_sample_rate: u32,
-    read_target: Arc<AudioBuffer>,
+    buffer: Arc<AudioBuffer>,
 ) -> cpal::Stream {
     let device = host.default_input_device().unwrap();
     let desired_sample_format = cpal::SampleFormat::F32;
@@ -46,23 +46,7 @@ fn init_input_stream(
 
     let print_error = |err| eprintln!("Audio input error: {}", err);
 
-    let read = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-        // let buffer = unsafe { &*read_target.get() };
-        // let base_index = buffer.write_index;
-        // let num_samples = data.len() / 2;
-        // let space_at_end = RING_BUFFER_SIZE - base_index;
-        //
-        // for (index, channels) in data.chunks(2).take(space_at_end).enumerate() {
-        //     buffer.left[base_index + index] = channels[0];
-        //     buffer.right[base_index + index] = channels[1];
-        // }
-        // for (index, channels) in data.chunks(2).skip(space_at_end).enumerate() {
-        //     buffer.left[index] = channels[0];
-        //     buffer.right[index] = channels[1];
-        // }
-        //
-        // buffer.write_index = (buffer.write_index + num_samples) % RING_BUFFER_SIZE;
-    };
+    let read = move |samples: &[f32], _: &cpal::InputCallbackInfo| buffer.write_samples(samples);
 
     device
         .build_input_stream(&config, read, print_error)
@@ -86,7 +70,9 @@ fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stre
     let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
         let frequency = 200.0;
         for (index, channels) in data.chunks_mut(2).enumerate() {
-            let x_s = (samples_written + index) as f32 / 44100.0 * (2.0 * 3.1415) * frequency;
+            let x_s = (samples_written + index) as f32 / 44100.0
+                * (2.0 * std::f32::consts::PI)
+                * frequency;
             channels[0] = x_s.sin() / 10.0;
             channels[1] = x_s.sin() / 10.0;
         }
@@ -114,7 +100,7 @@ impl Audio {
         let sample_rate = 44100;
 
         debug!("Initializing audio streams");
-        let input_stream = init_input_stream(&host, sample_rate, Arc::clone(&ring_buffer));
+        let input_stream = init_input_stream(&host, sample_rate, Arc::clone(ring_buffer));
         let output_stream = init_output_stream(&host, sample_rate);
 
         debug!("Running audio streams");
