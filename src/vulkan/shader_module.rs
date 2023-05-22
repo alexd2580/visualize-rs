@@ -92,7 +92,7 @@ pub struct ShaderModule {
 
 impl ShaderModule {
     fn mtime(path: &Path) -> Result<FileTime, Error> {
-        let source_metadata = path.metadata().map_err(Error::Io)?;
+        let source_metadata = path.metadata()?;
         Ok(FileTime::from_last_modification_time(&source_metadata))
     }
 
@@ -100,12 +100,11 @@ impl ShaderModule {
         let last_mtime = Self::mtime(source_path)?;
 
         debug!("Compiling shader");
-        let shader_content = compile_shader_file(source_path).map_err(Error::Io)?;
+        let shader_content = compile_shader_file(source_path)?;
 
         debug!("Initializing shader module");
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
-        let shader_module =
-            unsafe { device.create_shader_module(&shader_info, None) }.map_err(Error::Vk)?;
+        let shader_module = unsafe { device.create_shader_module(&shader_info, None) }?;
 
         let shader_entry_name = unsafe { CStr::from_bytes_with_nul_unchecked(b"main\0") };
         let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
@@ -125,6 +124,7 @@ impl ShaderModule {
     }
 
     pub fn new(device: Rc<Device>) -> Result<Self, Error> {
+        debug!("Initializing shader module");
         let source_path = PathBuf::from("shaders/debug.comp");
         ShaderModule::build(&device, &source_path)
     }
@@ -140,6 +140,7 @@ impl ShaderModule {
 
 impl Drop for ShaderModule {
     fn drop(self: &mut ShaderModule) {
+        debug!("Destroying shader module");
         unsafe { self.device.destroy_shader_module(self.shader_module, None) };
     }
 }

@@ -9,6 +9,10 @@ constants;
 
 layout(rgba32f, binding = 0) uniform image2D present;
 
+layout(binding = 1) buffer Dft {
+    float data[];
+} dft;
+
 void main() {
 
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);

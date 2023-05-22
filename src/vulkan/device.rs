@@ -26,7 +26,7 @@ impl Device {
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_family_index);
 
-        unsafe { device.create_command_pool(&pool_create_info, None) }.map_err(Error::Vk)
+        unsafe { Ok(device.create_command_pool(&pool_create_info, None)?) }
     }
 
     fn create_command_buffer(
@@ -41,12 +41,11 @@ impl Device {
         let command_buffers_or_err =
             unsafe { device.allocate_command_buffers(&buffer_allocate_info) };
 
-        command_buffers_or_err
-            .map(|some| some[0])
-            .map_err(Error::Vk)
+        Ok(command_buffers_or_err.map(|some| some[0])?)
     }
 
     pub fn new(instance: &Instance, physical_device: &PhysicalDevice) -> Result<Self, Error> {
+        debug!("Creating device");
         let device = instance.create_device(physical_device)?;
         let compute_queue =
             unsafe { device.get_device_queue(physical_device.compute_queue_family_index, 0) };

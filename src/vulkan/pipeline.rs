@@ -3,7 +3,7 @@ use ash::vk::{self, ShaderStageFlags};
 
 use log::debug;
 
-use std::{marker::PhantomData, mem, ops::Deref, rc::Rc};
+use std::{collections::HashMap, marker::PhantomData, mem, ops::Deref, rc::Rc};
 
 use super::{device::Device, shader_module::ShaderModule};
 
@@ -23,20 +23,36 @@ pub struct Pipeline<PushConstants> {
 }
 
 impl<PushConstants> Pipeline<PushConstants> {
+    fn make_binding(
+        binding: u32,
+        descriptor_type: vk::DescriptorType,
+    ) -> vk::DescriptorSetLayoutBinding {
+        vk::DescriptorSetLayoutBinding {
+            binding,
+            descriptor_type,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::COMPUTE,
+            ..Default::default()
+        }
+    }
+
+    fn create_descriptor_set_layout_bindings() -> Vec<vk::DescriptorSetLayoutBinding> {
+        let present_image = Self::make_binding(0, vk::DescriptorType::STORAGE_IMAGE);
+        let dft = Self::make_binding(1, vk::DescriptorType::STORAGE_BUFFER);
+
+        // TODO immutable samplers?
+        vec![present_image, dft]
+    }
+
     fn create_descriptor_set_layout(
         device: &ash::Device,
+        descriptor_set_layout_bindings: &[vk::DescriptorSetLayoutBinding],
     ) -> Result<vk::DescriptorSetLayout, Error> {
-        let descriptor_set_layout_binding = vk::DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE);
-        // TODO immutable samplers?
-        let descriptor_set_layout_bindings = [*descriptor_set_layout_binding];
         let descriptor_set_layout_create_info =
             vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
-        unsafe { device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None) }
-            .map_err(Error::Vk)
+        unsafe {
+            Ok(device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)?)
+        }
     }
 
     fn create_compute_pipeline_layout(
@@ -54,7 +70,7 @@ impl<PushConstants> Pipeline<PushConstants> {
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constant_ranges)
             .set_layouts(&descriptor_set_layouts);
-        unsafe { device.create_pipeline_layout(&layout_create_info, None) }.map_err(Error::Vk)
+        unsafe { Ok(device.create_pipeline_layout(&layout_create_info, None)?) }
     }
 
     fn create_compute_pipeline(
@@ -81,19 +97,31 @@ impl<PushConstants> Pipeline<PushConstants> {
 
     pub fn create_descriptor_pool(
         device: &Device,
-        descriptor_count: u32,
+        descriptor_set_layout_bindings: &[vk::DescriptorSetLayoutBinding],
         set_count: u32,
     ) -> Result<vk::DescriptorPool, Error> {
-        let descriptor_pool_size = vk::DescriptorPoolSize::builder()
-            .ty(vk::DescriptorType::STORAGE_IMAGE)
-            .descriptor_count(descriptor_count); // TODO
+        let mut accumulated_bindings = HashMap::new();
+        for binding in descriptor_set_layout_bindings {
+            let &new_count = accumulated_bindings
+                .get(&binding.descriptor_type)
+                .unwrap_or(&1);
+            accumulated_bindings.insert(binding.descriptor_type, new_count);
+        }
+        let descriptor_pool_sizes: Vec<vk::DescriptorPoolSize> = accumulated_bindings
+            .into_iter()
+            .map(
+                |(ty, descriptor_count): (vk::DescriptorType, u32)| vk::DescriptorPoolSize {
+                    ty,
+                    descriptor_count,
+                },
+            )
+            .collect();
 
-        let descriptor_pool_sizes = [*descriptor_pool_size];
         let pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(&descriptor_pool_sizes)
             .max_sets(set_count); // TODO
 
-        unsafe { device.create_descriptor_pool(&pool_create_info, None) }.map_err(Error::Vk)
+        unsafe { Ok(device.create_descriptor_pool(&pool_create_info, None)?) }
     }
 
     fn create_descriptor_sets(
@@ -106,20 +134,23 @@ impl<PushConstants> Pipeline<PushConstants> {
             .descriptor_pool(descriptor_pool)
             .set_layouts(descriptor_set_layouts.as_slice());
 
-        unsafe { device.allocate_descriptor_sets(&descriptor_set_allocate_info) }.map_err(Error::Vk)
+        unsafe { Ok(device.allocate_descriptor_sets(&descriptor_set_allocate_info)?) }
     }
 
     pub fn new(device: Rc<Device>, compute_shader: &ShaderModule) -> Result<Self, Error> {
         debug!("Creating Pipleine");
 
-        let descriptor_set_layout = Self::create_descriptor_set_layout(&device)?;
+        let descriptor_set_layout_bindings = Self::create_descriptor_set_layout_bindings();
+        let descriptor_set_layout =
+            Self::create_descriptor_set_layout(&device, &descriptor_set_layout_bindings)?;
 
         let pipeline_layout =
             Self::create_compute_pipeline_layout(&device, &descriptor_set_layout)?;
         let compute_pipeline =
             Self::create_compute_pipeline(&device, &pipeline_layout, compute_shader)?;
 
-        let descriptor_pool = Self::create_descriptor_pool(&device, 3, 3)?;
+        let descriptor_pool =
+            Self::create_descriptor_pool(&device, &descriptor_set_layout_bindings, 3)?;
         let descriptor_sets =
             Self::create_descriptor_sets(&device, descriptor_pool, descriptor_set_layout)?;
 

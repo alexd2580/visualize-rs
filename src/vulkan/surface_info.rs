@@ -1,5 +1,6 @@
 use crate::error::Error;
 use ash::vk;
+use log::debug;
 
 use super::{physical_device::PhysicalDevice, surface::Surface};
 
@@ -18,6 +19,7 @@ impl SurfaceInfo {
         physical_device: &PhysicalDevice,
         surface: &Surface,
     ) -> Result<Self, Error> {
+        debug!("Collecting surface info");
         let (surface_formats, surface_capabilities, present_modes) =
             surface.get_formats_capabilities_present_modes(physical_device)?;
         let surface_format = surface_formats[0];

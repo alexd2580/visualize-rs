@@ -15,7 +15,7 @@ pub struct Fence {
 impl Fence {
     pub fn new(device: Rc<Device>) -> Result<Self, Error> {
         let create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-        let fence = unsafe { device.create_fence(&create_info, None) }.map_err(Error::Vk)?;
+        let fence = unsafe { device.create_fence(&create_info, None) }?;
         Ok(Fence { device, fence })
     }
 

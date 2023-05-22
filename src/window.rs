@@ -34,8 +34,7 @@ impl Window {
         let window = WindowBuilder::new()
             .with_title("visualize-rs")
             .with_inner_size(size)
-            .build(&event_loop)
-            .map_err(Error::Os)?;
+            .build(&event_loop)?;
 
         Ok(Window {
             width,
@@ -47,22 +46,20 @@ impl Window {
 
     pub fn enumerate_required_extensions(&self) -> Result<Vec<*const i8>, Error> {
         let raw_handle = self.window.raw_display_handle();
-        let extensions_vk = ash_window::enumerate_required_extensions(raw_handle);
-        let extensions = extensions_vk.map_err(Error::Vk)?;
+        let extensions = ash_window::enumerate_required_extensions(raw_handle)?;
         Ok(extensions.to_vec())
     }
 
     pub fn create_surface(&self, instance: &Instance) -> Result<VkSurface, Error> {
         unsafe {
-            ash_window::create_surface(
+            Ok(ash_window::create_surface(
                 &instance.entry,
                 &instance.instance,
                 self.window.raw_display_handle(),
                 self.window.raw_window_handle(),
                 None,
-            )
+            )?)
         }
-        .map_err(Error::Vk)
     }
 
     fn handle_event<T: App>(event: Event<()>, app: &mut T) -> ControlFlow {

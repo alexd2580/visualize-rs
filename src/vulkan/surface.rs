@@ -44,12 +44,11 @@ impl Surface {
         let surface = self.surface;
         let physical_device = physical_device.physical_device;
         unsafe {
-            all((
+            Ok(all((
                 loader.get_physical_device_surface_formats(physical_device, surface),
                 loader.get_physical_device_surface_capabilities(physical_device, surface),
                 loader.get_physical_device_surface_present_modes(physical_device, surface),
-            ))
-            .map_err(Error::Vk)
+            ))?)
         }
     }
 }

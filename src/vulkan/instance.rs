@@ -24,8 +24,7 @@ impl Instance {
 
         // List available layers. TODO check that the validation layer exists.
         // let layer_properties = entry
-        //     .enumerate_instance_layer_properties()
-        //     .map_err(Error::VkError)?;
+        //     .enumerate_instance_layer_properties()?;
         let validation_layer =
             unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
         let layer_names = [validation_layer.as_ptr()];
@@ -35,17 +34,16 @@ impl Instance {
             .enabled_extension_names(&extension_names)
             .enabled_layer_names(&layer_names);
 
-        let instance = unsafe { entry.create_instance(&create_info, None) }.map_err(Error::Vk)?;
+        let instance = unsafe { entry.create_instance(&create_info, None) }?;
 
         Ok(Instance { entry, instance })
     }
 
     pub fn enumerate_physical_devices(&self) -> Result<Vec<vk::PhysicalDevice>, Error> {
-        unsafe { self.instance.enumerate_physical_devices() }.map_err(Error::Vk)
+        unsafe { Ok(self.instance.enumerate_physical_devices()?) }
     }
 
     pub fn create_device(&self, physical_device: &PhysicalDevice) -> Result<ash::Device, Error> {
-        debug!("Creating device");
         let compute_queue_create_info = vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(physical_device.compute_queue_family_index)
             .queue_priorities(&[1.0])
@@ -61,10 +59,12 @@ impl Instance {
             .enabled_features(&features);
 
         unsafe {
-            self.instance
-                .create_device(physical_device.physical_device, &device_create_info, None)
+            Ok(self.instance.create_device(
+                physical_device.physical_device,
+                &device_create_info,
+                None,
+            )?)
         }
-        .map_err(Error::Vk)
     }
 }
 

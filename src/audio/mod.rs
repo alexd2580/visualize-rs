@@ -1,10 +1,10 @@
+mod buffer;
+
 use std::sync::Arc;
 
 use log::debug;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-use crate::audio_buffer::{AudioBuffer, AUDIO_BUFFER_SIZE};
 
 fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfigRange>>(
     // This is a newtype for a `range` iterator.
@@ -32,7 +32,7 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
 fn init_input_stream(
     host: &cpal::Host,
     desired_sample_rate: u32,
-    buffer: Arc<AudioBuffer>,
+    buffer: Arc<buffer::Buffer>,
 ) -> cpal::Stream {
     let device = host.default_input_device().unwrap();
     let desired_sample_format = cpal::SampleFormat::F32;
@@ -85,6 +85,7 @@ fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stre
 }
 
 pub struct Audio {
+    ring_buffer: Arc<buffer::Buffer>,
     host: cpal::Host,
 
     sample_rate: u32,
@@ -94,13 +95,15 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(ring_buffer: &Arc<AudioBuffer>) -> Self {
+    pub fn new() -> Self {
+        let ring_buffer = buffer::Buffer::new();
+
         let host = cpal::default_host();
 
         let sample_rate = 44100;
 
         debug!("Initializing audio streams");
-        let input_stream = init_input_stream(&host, sample_rate, Arc::clone(ring_buffer));
+        let input_stream = init_input_stream(&host, sample_rate, ring_buffer.clone());
         let output_stream = init_output_stream(&host, sample_rate);
 
         debug!("Running audio streams");
@@ -108,10 +111,15 @@ impl Audio {
         output_stream.play().unwrap();
 
         Audio {
+            ring_buffer,
             host,
             sample_rate,
             input_stream,
             output_stream,
         }
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut [f32]) {
+        self.ring_buffer.write_to_buffer(buffer);
     }
 }

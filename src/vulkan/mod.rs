@@ -8,6 +8,7 @@ mod shader_module;
 mod surface;
 mod surface_info;
 mod swapchain;
+pub mod buffer;
 
 use std::rc::Rc;
 
@@ -47,7 +48,7 @@ pub struct Vulkan {
     compute_shader_module: ShaderModule,
     swapchain: Swapchain,
     surface_info: SurfaceInfo,
-    device: Rc<Device>,
+    pub device: Rc<Device>,
     physical_device: PhysicalDevice,
     surface: Surface,
     instance: Instance,

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use ash::{extensions, vk};
 
 use crate::error::Error;
-use log::warn;
+use log::{debug, warn};
 
 use super::{
     device::Device, instance::Instance, semaphore::Semaphore, surface::Surface,
@@ -28,6 +28,7 @@ impl Swapchain {
         surface_info: &SurfaceInfo,
         old_swapchain: Option<vk::SwapchainKHR>,
     ) -> Result<Swapchain, Error> {
+        debug!("Initializing swapchain");
         let surface_format = &surface_info.surface_format;
 
         let swapchain_loader = extensions::khr::Swapchain::new(&instance.instance, &device);
@@ -46,8 +47,7 @@ impl Swapchain {
             .image_array_layers(1)
             .old_swapchain(old_swapchain.unwrap_or(vk::SwapchainKHR::null()));
 
-        let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None) }
-            .map_err(Error::Vk)?;
+        let swapchain = unsafe { swapchain_loader.create_swapchain(&swapchain_create_info, None) }?;
 
         let image_subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -57,8 +57,7 @@ impl Swapchain {
             layer_count: 1,
         };
 
-        let images =
-            unsafe { swapchain_loader.get_swapchain_images(swapchain) }.map_err(Error::Vk)?;
+        let images = unsafe { swapchain_loader.get_swapchain_images(swapchain) }?;
 
         let image_views = images
             .iter()
@@ -86,8 +85,7 @@ impl Swapchain {
             compare_op: vk::CompareOp::NEVER,
             ..Default::default()
         };
-        let sampler =
-            unsafe { device.create_sampler(&sampler_create_info, None) }.map_err(Error::Vk)?;
+        let sampler = unsafe { device.create_sampler(&sampler_create_info, None) }?;
 
         Ok(Swapchain {
             device,
@@ -162,18 +160,19 @@ impl Swapchain {
             .image_indices(&[present_index as u32])
             .build();
 
-        unsafe { self.swapchain_loader.queue_present(queue, &present_info) }
-            .map(|suboptimal| {
+        unsafe { Ok(self.swapchain_loader.queue_present(queue, &present_info)?) }.map(
+            |suboptimal| {
                 if suboptimal {
                     warn!("Swapchain is suboptimal");
                 }
-            })
-            .map_err(Error::Vk)
+            },
+        )
     }
 }
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
+        debug!("Destroying swapchain");
         unsafe {
             self.device.destroy_sampler(self.sampler, None);
             self.image_views
