@@ -1,7 +1,6 @@
-use crate::vulkan::instance::Instance;
-use ash::vk::SurfaceKHR as VkSurface;
 use log::{debug, error};
 
+use ash::vk::SurfaceKHR as VkSurface;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
     dpi::PhysicalSize,
@@ -12,6 +11,7 @@ use winit::{
 };
 
 use crate::error::Error;
+use crate::vulkan::resources::{entry::Entry, instance::Instance};
 
 pub trait App {
     fn run_frame(&mut self) -> ControlFlow;
@@ -50,11 +50,11 @@ impl Window {
         Ok(extensions.to_vec())
     }
 
-    pub fn create_surface(&self, instance: &Instance) -> Result<VkSurface, Error> {
+    pub fn create_surface(&self, entry: &Entry, instance: &Instance) -> Result<VkSurface, Error> {
         unsafe {
             Ok(ash_window::create_surface(
-                &instance.entry,
-                &instance.instance,
+                entry,
+                instance,
                 self.window.raw_display_handle(),
                 self.window.raw_window_handle(),
                 None,

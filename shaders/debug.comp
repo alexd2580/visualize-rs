@@ -4,8 +4,7 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant, std140) uniform PushConstants {
   layout(offset = 0) uint frame_index;
-}
-constants;
+} constants;
 
 layout(rgba32f, binding = 0) uniform image2D present;
 

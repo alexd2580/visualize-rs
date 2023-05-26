@@ -1,8 +1,10 @@
-use crate::error::Error;
-use ash::vk;
 use log::debug;
 
-use super::{physical_device::PhysicalDevice, surface::Surface};
+use ash::vk;
+
+use crate::error::Error;
+
+use super::{physical_device::PhysicalDevice, surface::Surface, surface_loader::SurfaceLoader};
 
 #[derive(Debug)]
 pub struct SurfaceInfo {
@@ -14,14 +16,21 @@ pub struct SurfaceInfo {
 }
 
 impl SurfaceInfo {
-    pub fn new(
+    pub unsafe fn new(
         (width, height): (u32, u32),
         physical_device: &PhysicalDevice,
+        surface_loader: &SurfaceLoader,
         surface: &Surface,
     ) -> Result<Self, Error> {
         debug!("Collecting surface info");
-        let (surface_formats, surface_capabilities, present_modes) =
-            surface.get_formats_capabilities_present_modes(physical_device)?;
+
+        let surface_formats =
+            surface_loader.get_physical_device_surface_formats(**physical_device, **surface)?;
+        let surface_capabilities =
+            surface_loader.get_physical_device_surface_capabilities(**physical_device, **surface)?;
+        let present_modes =
+            surface_loader.get_physical_device_surface_present_modes(**physical_device, **surface)?;
+
         let surface_format = surface_formats[0];
 
         // For reference see:

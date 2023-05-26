@@ -1,7 +1,8 @@
 use std::{ops::Deref, rc::Rc};
 
-use ash::{self, vk};
 use log::debug;
+
+use ash::vk;
 
 use crate::error::Error;
 
@@ -12,14 +13,6 @@ pub struct Semaphore {
     semaphore: vk::Semaphore,
 }
 
-impl Semaphore {
-    pub fn new(device: Rc<Device>) -> Result<Self, Error> {
-        let semaphore =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }?;
-        Ok(Semaphore { device, semaphore })
-    }
-}
-
 impl Deref for Semaphore {
     type Target = vk::Semaphore;
 
@@ -28,11 +21,20 @@ impl Deref for Semaphore {
     }
 }
 
+impl Semaphore {
+    pub unsafe fn new(device: &Rc<Device>) -> Result<Rc<Self>, Error> {
+        debug!("Creating semaphore");
+        let device = device.clone();
+        let semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?;
+        Ok(Rc::new(Semaphore { device, semaphore }))
+    }
+}
+
 impl Drop for Semaphore {
     fn drop(&mut self) {
         debug!("Destroying semaphore");
         unsafe {
-            self.device.destroy_semaphore(self.semaphore, None);
+            self.device.destroy_semaphore(**self, None);
         }
     }
 }

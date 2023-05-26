@@ -1,8 +1,3 @@
-use ash::vk;
-
-use filetime::FileTime;
-use log::debug;
-
 use std::{
     ffi::CStr,
     fs,
@@ -12,6 +7,11 @@ use std::{
     rc::Rc,
     slice,
 };
+
+use filetime::FileTime;
+use log::debug;
+
+use ash::vk;
 
 use crate::error::Error;
 
@@ -102,7 +102,7 @@ impl ShaderModule {
         debug!("Compiling shader");
         let shader_content = compile_shader_file(source_path)?;
 
-        debug!("Initializing shader module");
+        debug!("Creating shader module");
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
         let shader_module = unsafe { device.create_shader_module(&shader_info, None) }?;
 
@@ -124,7 +124,7 @@ impl ShaderModule {
     }
 
     pub fn new(device: Rc<Device>) -> Result<Self, Error> {
-        debug!("Initializing shader module");
+        debug!("Creating shader module");
         let source_path = PathBuf::from("shaders/debug.comp");
         ShaderModule::build(&device, &source_path)
     }
