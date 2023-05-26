@@ -1,2 +1,2 @@
-shaders/out.spv
+shaders/*.spv
 /target
