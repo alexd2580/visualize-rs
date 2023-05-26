@@ -251,14 +251,14 @@ impl Vulkan {
     unsafe fn queue_submit(
         &self,
         wait_semaphores: &[vk::Semaphore],
+        wait_semaphore_stages: &[vk::PipelineStageFlags],
         signal_semaphores: &[vk::Semaphore],
     ) -> Result<(), Error> {
-        let command_buffers = [**self.command_buffer];
-
         let submit_info = vk::SubmitInfo::builder()
-            .command_buffers(&command_buffers)
-            .wait_semaphores(&wait_semaphores)
-            .signal_semaphores(&signal_semaphores)
+            .command_buffers(&[**self.command_buffer])
+            .wait_semaphores(wait_semaphores)
+            .wait_dst_stage_mask(wait_semaphore_stages)
+            .signal_semaphores(signal_semaphores)
             .build();
 
         Ok(self.device.queue_submit(
@@ -269,12 +269,13 @@ impl Vulkan {
     }
 
     unsafe fn queue_submit_task(&self) -> Result<(), Error> {
-        self.queue_submit(&[], &[])
+        self.queue_submit(&[], &[], &[])
     }
 
     unsafe fn queue_submit_compute(&self) -> Result<(), Error> {
         self.queue_submit(
             &[**self.image_acquired_semaphore],
+            &[vk::PipelineStageFlags::COMPUTE_SHADER],
             &[**self.compute_complete_semaphore],
         )
     }
