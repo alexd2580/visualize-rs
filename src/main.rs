@@ -1,4 +1,6 @@
-use std::{mem, path::PathBuf, rc::Rc};
+use std::{mem, rc::Rc};
+
+use clap::Parser;
 
 use error::Error;
 
@@ -35,10 +37,19 @@ impl Drop for App {
     }
 }
 
+/// Run an audio visualizer.
+#[derive(Parser)]
+struct Args {
+    /// The shader module path
+    #[arg(default_value = "shaders/debug.comp")]
+    shader_path: std::path::PathBuf,
+}
+
 fn run_main() -> Result<(), Error> {
+    let args = Args::parse();
+
     let mut window = window::Window::new(1280, 1024)?;
-    let compute_shader_path = PathBuf::from("shaders/debug.comp");
-    let vulkan = vulkan::Vulkan::new(&window, &compute_shader_path)?;
+    let vulkan = vulkan::Vulkan::new(&window, &args.shader_path)?;
 
     let audio = audio::Audio::new();
     let dft = dft::Dft::new();
