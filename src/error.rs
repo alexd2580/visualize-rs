@@ -1,14 +1,10 @@
-use std::io;
-
-use ash::vk;
-use winit::error::OsError;
-
 #[derive(Debug)]
 pub enum Error {
     Local(String),
-    Vk(vk::Result),
-    Os(OsError),
-    Io(io::Error),
+    Vk(ash::vk::Result),
+    Os(winit::error::OsError),
+    Io(std::io::Error),
+    Parse(glsl::parser::ParseError),
 }
 
 impl From<ash::vk::Result> for Error {
@@ -26,5 +22,11 @@ impl From<std::io::Error> for Error {
 impl From<winit::error::OsError> for Error {
     fn from(value: winit::error::OsError) -> Self {
         Error::Os(value)
+    }
+}
+
+impl From<glsl::parser::ParseError> for Error {
+    fn from(value: glsl::parser::ParseError) -> Self {
+        Error::Parse(value)
     }
 }

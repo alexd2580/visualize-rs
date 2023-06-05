@@ -30,7 +30,7 @@ impl DescriptorSetLayout {
         let device = device.clone();
 
         let descriptor_set_layout_create_info =
-            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_layout_bindings);
+            vk::DescriptorSetLayoutCreateInfo::builder().bindings(descriptor_set_layout_bindings);
         let descriptor_set_layout =
             device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)?;
 

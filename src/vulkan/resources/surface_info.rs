@@ -26,10 +26,10 @@ impl SurfaceInfo {
 
         let surface_formats =
             surface_loader.get_physical_device_surface_formats(**physical_device, **surface)?;
-        let surface_capabilities =
-            surface_loader.get_physical_device_surface_capabilities(**physical_device, **surface)?;
-        let present_modes =
-            surface_loader.get_physical_device_surface_present_modes(**physical_device, **surface)?;
+        let surface_capabilities = surface_loader
+            .get_physical_device_surface_capabilities(**physical_device, **surface)?;
+        let present_modes = surface_loader
+            .get_physical_device_surface_present_modes(**physical_device, **surface)?;
 
         let surface_format = surface_formats[0];
 

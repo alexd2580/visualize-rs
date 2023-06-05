@@ -23,7 +23,7 @@ impl Deref for SwapchainLoader {
 impl SwapchainLoader {
     pub fn new(instance: &Instance, device: &Device) -> Result<Rc<SwapchainLoader>, Error> {
         debug!("Creating swapchain loader");
-        let swapchain_loader = extensions::khr::Swapchain::new(&instance, &device);
+        let swapchain_loader = extensions::khr::Swapchain::new(instance, device);
 
         Ok(Rc::new(SwapchainLoader { swapchain_loader }))
     }

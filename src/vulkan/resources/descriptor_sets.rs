@@ -27,11 +27,12 @@ impl DescriptorSets {
         device: &Device,
         descriptor_set_layout: &DescriptorSetLayout,
         descriptor_pool: &DescriptorPool,
+        num_sets: u32,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating descriptor sets");
 
         let descriptor_set_layout = **descriptor_set_layout;
-        let descriptor_set_layouts = vec![descriptor_set_layout; 3];
+        let descriptor_set_layouts = vec![descriptor_set_layout; num_sets as usize];
         let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(**descriptor_pool)
             .set_layouts(&descriptor_set_layouts);

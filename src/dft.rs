@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ffi::c_void, sync::Arc};
 
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
@@ -26,7 +26,12 @@ impl Dft {
         // assert_eq!(scratch.len(), length);
         assert_eq!(output.len(), length / 2 + 1);
 
-        Dft { r2c, input, scratch, output }
+        Dft {
+            r2c,
+            input,
+            scratch,
+            output,
+        }
     }
 
     pub fn get_input_vec(&mut self) -> &mut [f32] {
@@ -37,7 +42,17 @@ impl Dft {
         &self.output
     }
 
+    pub fn write_to_pointer(&self, target: *mut c_void) {
+        unsafe {
+            self.output
+                .as_ptr()
+                .copy_to(target.cast(), self.output.len());
+        }
+    }
+
     pub fn run_transform(&mut self) {
-        self.r2c.process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch).unwrap();
+        self.r2c
+            .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
+            .unwrap();
     }
 }

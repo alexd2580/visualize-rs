@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc, collections::HashMap};
+use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::error::Error;
 
-use super::{device::Device, descriptor_set_layout_bindings::DescriptorSetLayoutBindings};
+use super::{descriptor_set_layout_bindings::DescriptorSetLayoutBindings, device::Device};
 
 pub struct DescriptorPool {
     device: Rc<Device>,
@@ -22,7 +22,11 @@ impl Deref for DescriptorPool {
 }
 
 impl DescriptorPool {
-    pub unsafe fn new(device: &Rc<Device>, descriptor_set_layout_bindings: &DescriptorSetLayoutBindings, set_count: u32) -> Result<Rc<Self>, Error> {
+    pub unsafe fn new(
+        device: &Rc<Device>,
+        descriptor_set_layout_bindings: &DescriptorSetLayoutBindings,
+        set_count: u32,
+    ) -> Result<Rc<Self>, Error> {
         debug!("Creating descriptor pool");
         let device = device.clone();
 

@@ -41,8 +41,7 @@ impl Device {
             .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&features);
 
-        let device =
-            instance.create_device(physical_device.physical_device, &device_create_info, None)?;
+        let device = instance.create_device(**physical_device, &device_create_info, None)?;
 
         Ok(Rc::new(Device { device }))
     }

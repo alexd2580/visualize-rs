@@ -1,24 +1,26 @@
-// use std::mem;
-//
-// use realfft::num_complex::Complex;
+use std::{mem, path::PathBuf, rc::Rc};
 
-// mod audio;
-// mod dft;
+use error::Error;
+
+mod audio;
+mod dft;
 mod error;
 mod vulkan;
 mod window;
 
 struct App {
-    // audio: audio::Audio,
-    // dft: dft::Dft,
-    // dft_buffer: vulkan::buffer::Buffer,
+    audio: audio::Audio,
+    dft: dft::Dft,
+    dft_buffer: Rc<vulkan::multi_buffer::MultiBuffer>,
     vulkan: vulkan::Vulkan,
 }
 
 impl window::App for App {
     fn run_frame(&mut self) -> winit::event_loop::ControlFlow {
-        // self.audio.write_to_buffer(self.dft.get_input_vec());
-        // self.dft.run_transform();
+        self.audio.write_to_slice(self.dft.get_input_vec());
+        self.dft.run_transform();
+        self.dft
+            .write_to_pointer(self.dft_buffer.mapped(self.vulkan.binding_index));
         self.vulkan.run_frame()
     }
 
@@ -33,29 +35,33 @@ impl Drop for App {
     }
 }
 
-fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
-    log::info!("Initializing");
+fn run_main() -> Result<(), Error> {
+    let mut window = window::Window::new(1280, 1024)?;
+    let compute_shader_path = PathBuf::from("shaders/debug.comp");
+    let vulkan = vulkan::Vulkan::new(&window, &compute_shader_path)?;
 
-    let mut window = window::Window::new(1280, 1024).expect("Failed to open window");
-    let vulkan = vulkan::Vulkan::new(&window).expect("Failed to initialize vulkan");
+    let audio = audio::Audio::new();
+    let dft = dft::Dft::new();
+    let dft_result_size = mem::size_of_val(dft.get_output_vec()) as u64;
+    let dft_buffer = vulkan.new_multi_buffer("dft", dft_result_size)?;
 
-    // let audio = audio::Audio::new();
-    // let dft = dft::Dft::new();
-    // let dft_result_size = (dft.get_output_vec().len() * mem::size_of::<Complex<f32>>()) as u64;
-    // let dft_buffer = vulkan::buffer::Buffer::new(&vulkan.device, 123, dft_result_size, 3)
-    //     .expect("Failed to allocate DFT buffer");
-
-    log::info!("Running");
+    log::info!("Running...");
     {
         let mut app = App {
-            // audio,
-            // dft,
-            // dft_buffer,
+            audio,
+            dft,
+            dft_buffer,
             vulkan,
         };
         window.run_main_loop(&mut app);
     }
 
-    log::info!("Terminating");
+    Ok(())
+}
+
+fn main() {
+    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    log::info!("Initializing...");
+    run_main().unwrap();
+    log::info!("Terminating...");
 }

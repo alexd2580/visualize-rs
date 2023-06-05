@@ -12,6 +12,8 @@ pub struct Buffer {
     data: UnsafeCell<BufferData>,
 }
 
+unsafe impl Sync for Buffer {}
+
 impl Buffer {
     pub fn new() -> Arc<Self> {
         let data = UnsafeCell::new(BufferData {
@@ -39,8 +41,8 @@ impl Buffer {
         let num_samples = samples.len() / num_channels;
         let space_at_end = AUDIO_BUFFER_SIZE - base_index;
 
-        let ref mut left = data.left;
-        let ref mut right = data.right;
+        let left = &mut data.left;
+        let right = &mut data.right;
 
         for (index, channels) in samples.chunks(num_channels).take(space_at_end).enumerate() {
             left[base_index + index] = channels[0];
@@ -64,8 +66,7 @@ impl Buffer {
         let samples_from_end = samples_to_end.min(size);
 
         // Copy start part of buffer (end may wrap around to the beginning of the audio buffer.
-        buffer[..samples_from_end].copy_from_slice(&data.left[start_index..start_index + samples_from_end]);
+        buffer[..samples_from_end]
+            .copy_from_slice(&data.left[start_index..start_index + samples_from_end]);
     }
 }
-
-unsafe impl Sync for Buffer {}

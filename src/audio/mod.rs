@@ -86,12 +86,12 @@ fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stre
 
 pub struct Audio {
     ring_buffer: Arc<buffer::Buffer>,
-    host: cpal::Host,
+    _host: cpal::Host,
 
-    sample_rate: u32,
+    _sample_rate: u32,
 
-    input_stream: cpal::Stream,
-    output_stream: cpal::Stream,
+    _input_stream: cpal::Stream,
+    _output_stream: cpal::Stream,
 }
 
 impl Audio {
@@ -112,14 +112,14 @@ impl Audio {
 
         Audio {
             ring_buffer,
-            host,
-            sample_rate,
-            input_stream,
-            output_stream,
+            _host: host,
+            _sample_rate: sample_rate,
+            _input_stream: input_stream,
+            _output_stream: output_stream,
         }
     }
 
-    pub fn write_to_buffer(&self, buffer: &mut [f32]) {
+    pub fn write_to_slice(&self, buffer: &mut [f32]) {
         self.ring_buffer.write_to_buffer(buffer);
     }
 }

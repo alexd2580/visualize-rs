@@ -1,4 +1,4 @@
-use std::{ffi::CStr, ops::Deref, rc::Rc};
+use std::{ffi::CStr, mem, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -7,10 +7,6 @@ use ash::vk;
 use crate::error::Error;
 
 use super::{device::Device, pipeline_layout::PipelineLayout, shader_module::ShaderModule};
-
-unsafe fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
-}
 
 pub struct Pipeline {
     device: Rc<Device>,
@@ -33,6 +29,28 @@ impl Pipeline {
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating pipleine");
         let device = device.clone();
+
+        let cpu_push_constants_size = mem::size_of::<PushConstants>() as u32;
+        let gpu_push_constants = shader_module
+            .block_declarations
+            .iter()
+            .find(|declaration| {
+                declaration
+                    .layout_qualifiers
+                    .iter()
+                    .any(|qualifier| qualifier == "push_constant")
+            })
+            .ok_or_else(|| {
+                Error::Local("Shader module does not define push constants".to_owned())
+            })?;
+        let gpu_push_constants_size = gpu_push_constants
+            .byte_size()
+            .ok_or_else(|| Error::Local("Push constant block is unsized".to_owned()))?;
+
+        if cpu_push_constants_size != gpu_push_constants_size {
+            let msg = format!("CPU ({cpu_push_constants_size}) and GPU ({cpu_push_constants_size}) push constant sizes differ.");
+            return Err(Error::Local(msg));
+        }
 
         let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
         let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {

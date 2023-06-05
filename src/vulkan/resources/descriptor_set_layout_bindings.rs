@@ -6,6 +6,8 @@ use ash::vk;
 
 use crate::error::Error;
 
+use super::shader_module::ShaderModule;
+
 pub struct DescriptorSetLayoutBindings {
     descriptor_set_layout_bindings: Vec<vk::DescriptorSetLayoutBinding>,
 }
@@ -32,15 +34,31 @@ impl DescriptorSetLayoutBindings {
         }
     }
 
-    pub fn new() -> Result<Rc<Self>, Error> {
+    pub fn new(shader_module: &ShaderModule) -> Result<Rc<Self>, Error> {
         debug!("Creating descriptor set layout bindings");
 
-        let present_image = Self::make_binding(0, vk::DescriptorType::STORAGE_IMAGE);
-        let dft = Self::make_binding(1, vk::DescriptorType::STORAGE_BUFFER);
+        // Are these always storage images?
+        let variable_bindings = shader_module
+            .variable_declarations
+            .iter()
+            .map(|declaration| {
+                Self::make_binding(
+                    declaration.binding as u32,
+                    vk::DescriptorType::STORAGE_IMAGE,
+                )
+            });
 
-        // TODO immutable samplers?
-        let descriptor_set_layout_bindings = vec![present_image, dft];
+        let block_bindings = shader_module
+            .block_declarations
+            .iter()
+            .filter_map(|declaration| {
+                declaration
+                    .binding
+                    .map(|binding| Self::make_binding(binding, declaration.storage))
+            });
 
+        // TODO immutable samplers, what are immutable samplers???
+        let descriptor_set_layout_bindings = variable_bindings.chain(block_bindings).collect();
         Ok(Rc::new(DescriptorSetLayoutBindings {
             descriptor_set_layout_bindings,
         }))

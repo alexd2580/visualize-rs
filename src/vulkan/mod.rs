@@ -1,4 +1,4 @@
-use std::{path::PathBuf, rc::Rc};
+use std::{path::Path, rc::Rc};
 
 use ash::vk;
 use log::{debug, error, info, warn};
@@ -16,15 +16,23 @@ use crate::{
 
 pub mod resources;
 
-use self::resources::{
-    command_buffer::CommandBuffer, command_pool::CommandPool, compute_queue::ComputeQueue,
-    descriptor_sets::DescriptorSets, device::Device, entry::Entry,
-    image_subresource_range::ImageSubresourceRange, instance::Instance,
-    physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
-    sampler::Sampler, surface::Surface, surface_info::SurfaceInfo, surface_loader::SurfaceLoader,
-    swapchain::Swapchain, swapchain_loader::SwapchainLoader,
+use self::{
+    multi_buffer::MultiBuffer,
+    resources::{
+        command_buffer::CommandBuffer, command_pool::CommandPool, compute_queue::ComputeQueue,
+        descriptor_sets::DescriptorSets, device::Device, entry::Entry,
+        image_subresource_range::ImageSubresourceRange, instance::Instance,
+        physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
+        sampler::Sampler, surface::Surface, surface_info::SurfaceInfo,
+        surface_loader::SurfaceLoader, swapchain::Swapchain, swapchain_loader::SwapchainLoader,
+    },
 };
 
+pub mod multi_buffer;
+
+// This struct is not supposed to be read on the CPU, it only maps the structure of the push
+// constants block so that it can be written to the gpu memory properly.
+#[allow(dead_code)]
 struct PushConstants {
     num_frames: u32,
 }
@@ -32,18 +40,19 @@ struct PushConstants {
 // Define fields in reverse drop order.
 pub struct Vulkan {
     pub num_frames: u32,
+    pub binding_index: usize,
     stale_image_layout: bool,
     stale_swapchain: bool,
-    //
+
     image_acquired_semaphore: Rc<Semaphore>,
     compute_complete_semaphore: Rc<Semaphore>,
     reuse_command_buffer_fence: Rc<Fence>,
     descriptor_sets: Rc<DescriptorSets>,
-    descriptor_pool: Rc<DescriptorPool>,
+    _descriptor_pool: Rc<DescriptorPool>,
     pipeline: Rc<Pipeline>,
     pipeline_layout: Rc<PipelineLayout<PushConstants>>,
-    descriptor_set_layout: Rc<DescriptorSetLayout>,
-    descriptor_set_layout_bindings: Rc<DescriptorSetLayoutBindings>,
+    _descriptor_set_layout: Rc<DescriptorSetLayout>,
+    _descriptor_set_layout_bindings: Rc<DescriptorSetLayoutBindings>,
     compute_shader_module: Rc<ShaderModule>,
     sampler: Rc<Sampler>,
     image_views: Rc<ImageViews>,
@@ -54,54 +63,96 @@ pub struct Vulkan {
     surface_info: SurfaceInfo,
     window_size: (u32, u32),
     command_buffer: Rc<CommandBuffer>,
-    command_pool: Rc<CommandPool>,
+    _command_pool: Rc<CommandPool>,
     compute_queue: Rc<ComputeQueue>,
     device: Rc<Device>,
     physical_device: Rc<PhysicalDevice>,
     surface: Rc<Surface>,
     surface_loader: Rc<SurfaceLoader>,
-    instance: Rc<Instance>,
-    entry: Rc<Entry>,
+    _instance: Rc<Instance>,
+    _entry: Rc<Entry>,
 }
 
 impl Vulkan {
-    unsafe fn initialize_descriptor_sets(&self) {
-        debug!("Initializing descriptor sets");
-
-        // Can't merge maps, we need to have an adressable list of descimageinfos.
-        // For reference see `WriteDescriptorSetBuilder::image_info`.
-        let image_infos: Vec<[vk::DescriptorImageInfo; 1]> = self
-            .image_views
-            .iter()
-            .map(|&image_view| {
-                [vk::DescriptorImageInfo::builder()
-                    .image_view(image_view)
-                    .sampler(**self.sampler)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .build()]
-            })
-            .collect();
-
-        let write_descriptor_sets: Vec<vk::WriteDescriptorSet> = self
-            .descriptor_sets
-            .iter()
-            .zip(image_infos.iter())
-            .map(|(&descriptor_set, image_info)| {
+    unsafe fn write_descriptor_sets(
+        &self,
+        image_descriptors: &[(
+            vk::DescriptorType,
+            [vk::DescriptorImageInfo; 1],
+            vk::DescriptorSet,
+            u32,
+        )],
+        buffer_descriptors: &[(
+            vk::DescriptorType,
+            [vk::DescriptorBufferInfo; 1],
+            vk::DescriptorSet,
+            u32,
+        )],
+    ) {
+        let image_descriptors = image_descriptors.iter().map(
+            |&(descriptor_type, ref image_info, descriptor_set, descriptor_binding)| {
                 vk::WriteDescriptorSet::builder()
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_type(descriptor_type)
                     .image_info(image_info)
                     .dst_set(descriptor_set)
-                    .dst_binding(0)
+                    .dst_binding(descriptor_binding)
                     .dst_array_element(0)
                     .build()
-            })
-            .collect();
+            },
+        );
+
+        let buffer_descriptors = buffer_descriptors.iter().map(
+            |&(descriptor_type, ref buffer_info, descriptor_set, descriptor_binding)| {
+                vk::WriteDescriptorSet::builder()
+                    .descriptor_type(descriptor_type)
+                    .buffer_info(buffer_info)
+                    .dst_set(descriptor_set)
+                    .dst_binding(descriptor_binding)
+                    .dst_array_element(0)
+                    .build()
+            },
+        );
+
+        let write_descriptor_sets: Vec<vk::WriteDescriptorSet> =
+            image_descriptors.chain(buffer_descriptors).collect();
 
         self.device
             .update_descriptor_sets(&write_descriptor_sets, &[]);
     }
 
-    pub fn new(window: &Window) -> Result<Self, Error> {
+    unsafe fn initialize_descriptor_sets(&self) {
+        debug!("Initializing descriptor sets");
+
+        let image_descriptors: Vec<(
+            vk::DescriptorType,
+            [vk::DescriptorImageInfo; 1],
+            vk::DescriptorSet,
+            u32,
+        )> = self
+            .image_views
+            .iter()
+            .zip(self.descriptor_sets.iter())
+            .map(|(image_view, descriptor_set)| {
+                let image_info = vk::DescriptorImageInfo::builder()
+                    .image_view(*image_view)
+                    .sampler(**self.sampler)
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .build();
+
+                (
+                    vk::DescriptorType::STORAGE_IMAGE,
+                    [image_info],
+                    *descriptor_set,
+                    // Hardcode sampler to binding 0.
+                    0,
+                )
+            })
+            .collect();
+
+        self.write_descriptor_sets(&image_descriptors, &[]);
+    }
+
+    pub fn new(window: &Window, compute_shader_path: &Path) -> Result<Self, Error> {
         debug!("Initializing video system");
         unsafe {
             let entry = Entry::new()?;
@@ -125,30 +176,38 @@ impl Vulkan {
                 ImageViews::new(&device, &images, &surface_info, &image_subresource_range)?;
             let sampler = Sampler::new(&device)?;
 
-            let compute_shader_path = PathBuf::from("shaders/debug.comp");
-            let compute_shader_module = ShaderModule::new(&device, &compute_shader_path)?;
-            let descriptor_set_layout_bindings = DescriptorSetLayoutBindings::new()?;
+            let compute_shader_module = ShaderModule::new(&device, compute_shader_path)?;
+            let descriptor_set_layout_bindings =
+                DescriptorSetLayoutBindings::new(&compute_shader_module)?;
             let descriptor_set_layout =
                 DescriptorSetLayout::new(&device, &descriptor_set_layout_bindings)?;
             let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layout)?;
             let pipeline = Pipeline::new(&device, &compute_shader_module, &pipeline_layout)?;
-            let descriptor_pool = DescriptorPool::new(&device, &descriptor_set_layout_bindings, 3)?;
-            let descriptor_sets =
-                DescriptorSets::new(&device, &descriptor_set_layout, &descriptor_pool)?;
+            let descriptor_pool = DescriptorPool::new(
+                &device,
+                &descriptor_set_layout_bindings,
+                surface_info.desired_image_count,
+            )?;
+            let descriptor_sets = DescriptorSets::new(
+                &device,
+                &descriptor_set_layout,
+                &descriptor_pool,
+                surface_info.desired_image_count,
+            )?;
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
             let image_acquired_semaphore = Semaphore::new(&device)?;
             let compute_complete_semaphore = Semaphore::new(&device)?;
 
             let vulkan = Vulkan {
-                entry,
-                instance,
+                _entry: entry,
+                _instance: instance,
                 surface_loader,
                 surface,
                 physical_device,
                 device,
                 compute_queue,
-                command_pool,
+                _command_pool: command_pool,
                 command_buffer,
                 window_size,
                 surface_info,
@@ -159,15 +218,16 @@ impl Vulkan {
                 image_views,
                 sampler,
                 compute_shader_module,
-                descriptor_set_layout_bindings,
-                descriptor_set_layout,
+                _descriptor_set_layout_bindings: descriptor_set_layout_bindings,
+                _descriptor_set_layout: descriptor_set_layout,
                 pipeline_layout,
                 pipeline,
-                descriptor_pool,
+                _descriptor_pool: descriptor_pool,
                 descriptor_sets,
                 reuse_command_buffer_fence,
                 image_acquired_semaphore,
                 compute_complete_semaphore,
+                binding_index: 0,
                 num_frames: 0,
                 // Images are in undefined layout when created.
                 stale_image_layout: true,
@@ -234,6 +294,64 @@ impl Vulkan {
         self.initialize_descriptor_sets();
 
         Ok(())
+    }
+
+    pub fn new_multi_buffer(
+        &self,
+        name: &str,
+        size: vk::DeviceSize,
+    ) -> Result<Rc<MultiBuffer>, Error> {
+        let num_buffers = self.surface_info.desired_image_count as usize;
+        // TODO num buffers?
+        unsafe {
+            let shader_block_decl = self
+                .compute_shader_module
+                .block_declarations
+                .iter()
+                .find(|shader_module| {
+                    shader_module
+                        .identifier
+                        .as_ref()
+                        .is_some_and(|val| val == name)
+                })
+                .ok_or_else(|| {
+                    let msg = format!("No block '{name}' within shader module.");
+                    Error::Local(msg)
+                })?;
+
+            let storage = shader_block_decl.storage;
+
+            let binding = shader_block_decl.binding.ok_or_else(|| {
+                let msg = format!("Block '{name}' does not specify a binding.");
+                Error::Local(msg)
+            })?;
+
+            let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
+
+            let buffer_descriptors: Vec<(
+                vk::DescriptorType,
+                [vk::DescriptorBufferInfo; 1],
+                vk::DescriptorSet,
+                u32,
+            )> = buffer
+                .buffers
+                .iter()
+                .zip(self.descriptor_sets.iter())
+                .map(|(buffer_unit, descriptor_set)| {
+                    let buffer_info = vk::DescriptorBufferInfo::builder()
+                        .buffer(**buffer_unit.buffer)
+                        .offset(0)
+                        .range(size)
+                        .build();
+
+                    (storage, [buffer_info], *descriptor_set, binding)
+                })
+                .collect();
+
+            self.write_descriptor_sets(&[], &buffer_descriptors);
+
+            Ok(buffer)
+        }
     }
 
     unsafe fn begin_command_buffer(&self) -> Result<(), Error> {
@@ -374,7 +492,18 @@ impl Vulkan {
     }
 
     unsafe fn dispatch(&self) {
-        self.device.cmd_dispatch(**self.command_buffer, 100, 100, 1);
+        let local_size = self.compute_shader_module.local_size;
+        let window_size = self.window_size;
+        let invocation_x = window_size.0 / local_size.0;
+        let invocation_y = window_size.1 / local_size.1;
+        let invocation_z = 1; // Hardcode for now.
+
+        self.device.cmd_dispatch(
+            **self.command_buffer,
+            invocation_x,
+            invocation_y,
+            invocation_z,
+        );
     }
 
     unsafe fn present(&self, present_index: usize) -> Result<(), Error> {
@@ -393,26 +522,6 @@ impl Vulkan {
                 }
             })?)
     }
-
-//
-//     let write_descriptor_sets: Vec<WriteDescriptorSet> = image_infos_vec
-//         .iter()
-//         .zip(descriptor_sets.iter())
-//         .map(|(image_infos, &descriptor_set)| {
-//             let a = WriteDescriptorSet::builder()
-//                 .descriptor_type(DescriptorType::STORAGE_IMAGE)
-//                 .image_info(image_infos)
-//                 .dst_set(descriptor_set)
-//                 .dst_binding(0)
-//                 .dst_array_element(0)
-//                 .build();
-//
-//             return a;
-//         })
-//         .collect();
-//
-//     unsafe { device.update_descriptor_sets(&write_descriptor_sets, &[]) };
-//
 
     unsafe fn render_next_frame(&mut self) -> Result<(), Error> {
         let (present_index, present_image) = self.acquire_next_image()?;
