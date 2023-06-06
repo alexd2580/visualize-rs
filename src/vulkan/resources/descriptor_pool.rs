@@ -32,19 +32,18 @@ impl DescriptorPool {
 
         let mut accumulated_bindings = HashMap::new();
         for binding in &**descriptor_set_layout_bindings {
-            let &new_count = accumulated_bindings
+            let &old_count = accumulated_bindings
                 .get(&binding.descriptor_type)
-                .unwrap_or(&1);
-            accumulated_bindings.insert(binding.descriptor_type, new_count);
+                .unwrap_or(&0);
+            accumulated_bindings.insert(binding.descriptor_type, old_count + 1);
         }
+
         let descriptor_pool_sizes: Vec<vk::DescriptorPoolSize> = accumulated_bindings
             .into_iter()
-            .map(
-                |(ty, descriptor_count): (vk::DescriptorType, u32)| vk::DescriptorPoolSize {
-                    ty,
-                    descriptor_count,
-                },
-            )
+            .map(|(type_, count)| vk::DescriptorPoolSize {
+                ty: type_,
+                descriptor_count: count * set_count,
+            })
             .collect();
 
         let pool_create_info = vk::DescriptorPoolCreateInfo::builder()

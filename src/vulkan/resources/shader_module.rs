@@ -83,8 +83,27 @@ fn compile_shader_file(file: &Path) -> io::Result<Vec<u32>> {
 }
 
 fn mtime(path: &Path) -> Result<FileTime, Error> {
-    let source_metadata = path.metadata()?;
+    let source_metadata = path.metadata().map_err(|err| {
+        Error::Local(format!("File '{}' cannot be read: {err:?}", path.display()))
+    })?;
     Ok(FileTime::from_last_modification_time(&source_metadata))
+}
+
+fn simplify_layout_qualifiers(
+    layout_qualifier_specs: &[syntax::LayoutQualifierSpec],
+) -> impl Iterator<Item = Result<(&str, Option<&syntax::Expr>), Error>> {
+    layout_qualifier_specs.iter().map(|layout_qualifier_spec| {
+        // Unpack layout qualifier spec, expect identifiers only.
+        if let syntax::LayoutQualifierSpec::Identifier(syntax::Identifier(name), maybe_value_box) =
+            layout_qualifier_spec
+        {
+            let maybe_value = maybe_value_box.as_ref().map(|x| &**x);
+            Ok((name.as_str(), maybe_value))
+        } else {
+            let msg = format!("Unexpected layout qualifier spec: {layout_qualifier_spec:?}");
+            Err(Error::Local(msg))
+        }
+    })
 }
 
 fn match_globals(
@@ -105,28 +124,18 @@ fn match_globals(
             &syntax::TypeQualifierSpec::Layout(syntax::LayoutQualifier {
                 ids: syntax::NonEmpty(ref ids),
             }) => {
-                for id in ids {
-                    // Unpack layout qualifier spec, expect identifiers only.
-                    let (name, value_box) = if let &syntax::LayoutQualifierSpec::Identifier(
-                        syntax::Identifier(ref name),
-                        Some(ref value_box),
-                    ) = id
-                    {
-                        (name, value_box)
-                    } else {
-                        let msg = format!("Unexpected layout qualifier spec: {id:?}");
-                        return Err(Error::Local(msg));
-                    };
+                for id in simplify_layout_qualifiers(ids) {
+                    let (name, maybe_value) = id?;
 
                     // Currently we only expect int values.
-                    let value = if let syntax::Expr::IntConst(value) = **value_box {
+                    let value = if let Some(&syntax::Expr::IntConst(value)) = maybe_value {
                         value as u32
                     } else {
-                        let msg = format!("Unexpected value: {:?}", **value_box);
+                        let msg = format!("Unexpected value: {:?}", maybe_value);
                         return Err(Error::Local(msg));
                     };
 
-                    match name.as_str() {
+                    match name {
                         "local_size_x" => local_size.0 = value,
                         "local_size_y" => local_size.1 = value,
                         "local_size_z" => local_size.2 = value,
@@ -152,6 +161,7 @@ pub struct VariableDeclaration {
     pub name: String,
     pub type_specifier: syntax::TypeSpecifierNonArray,
     pub binding: i32,
+    pub set: Option<u32>,
     pub type_format: Option<String>,
 }
 
@@ -188,6 +198,7 @@ fn match_init_declarator_list(
     };
 
     let mut binding = None;
+    let mut set = None;
     let mut type_format = None;
 
     for type_qualifier_spec in type_qualifier_specs {
@@ -198,31 +209,13 @@ fn match_init_declarator_list(
             syntax::TypeQualifierSpec::Layout(syntax::LayoutQualifier {
                 ids: syntax::NonEmpty(ids),
             }) => {
-                for id in ids {
-                    let (name, maybe_value_box) = if let &syntax::LayoutQualifierSpec::Identifier(
-                        syntax::Identifier(ref name),
-                        ref maybe_value_box,
-                    ) = id
-                    {
-                        (name, maybe_value_box)
-                    } else {
-                        let msg = format!("Unexpected layout qualifier spec: {id:?}");
-                        return Err(Error::Local(msg));
-                    };
-
-                    match (name.as_str(), maybe_value_box) {
-                        ("binding", Some(ref value_box)) => {
-                            // Currently we only expect int values for bindings.
-                            let value = if let syntax::Expr::IntConst(value) = **value_box {
-                                value
-                            } else {
-                                let msg = format!("Unexpected value: {:?}", **value_box);
-                                return Err(Error::Local(msg));
-                            };
-
-                            binding = Some(value);
-                        }
-                        ("rgba32f", None) => type_format = Some("rgba32f".to_owned()),
+                for id in simplify_layout_qualifiers(ids) {
+                    let (name, maybe_value) = id?;
+                    match (name, maybe_value) {
+                        // Currently we only expect int values for bindings.
+                        ("binding", Some(&syntax::Expr::IntConst(value))) => binding = Some(value),
+                        ("rgba32f", None) => type_format = Some(name.to_owned()),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as u32),
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -272,6 +265,7 @@ fn match_init_declarator_list(
         name,
         type_specifier,
         binding,
+        set,
         type_format,
     })
 }
@@ -340,30 +334,10 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                 &syntax::TypeQualifierSpec::Layout(syntax::LayoutQualifier {
                     ids: syntax::NonEmpty(ref ids),
                 }) => {
-                    for id in ids {
-                        let (name, maybe_value_box) =
-                            if let &syntax::LayoutQualifierSpec::Identifier(
-                                syntax::Identifier(ref name),
-                                ref maybe_value_box,
-                            ) = id
-                            {
-                                (name, maybe_value_box)
-                            } else {
-                                let msg = format!("Unexpected layout qualifier spec: {id:?}");
-                                return Err(Error::Local(msg));
-                            };
-
-                        match (name.as_str(), maybe_value_box) {
-                            ("offset", Some(ref value_box)) => {
-                                // Currently we only expect int values for bindings.
-                                let value = if let syntax::Expr::IntConst(value) = **value_box {
-                                    value
-                                } else {
-                                    let msg = format!("Unexpected value: {:?}", **value_box);
-                                    return Err(Error::Local(msg));
-                                };
-
-                                offset = Some(value);
+                    for id in simplify_layout_qualifiers(ids) {
+                        match id? {
+                            ("offset", Some(&syntax::Expr::IntConst(value))) => {
+                                offset = Some(value)
                             }
                             unexpected => {
                                 let msg = format!("Unexpected layout identifier: {unexpected:?}");
@@ -438,6 +412,7 @@ pub struct BlockDeclaration {
     pub identifier: Option<String>,
     pub storage: vk::DescriptorType,
     pub binding: Option<u32>,
+    pub set: Option<u32>,
     pub layout_qualifiers: Vec<String>,
     pub fields: Vec<BlockField>,
 }
@@ -479,6 +454,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
 
     let mut storage = None;
     let mut binding = None;
+    let mut set = None;
     let mut layout_qualifiers = Vec::new();
 
     for type_qualifier_spec in type_qualifier_specs {
@@ -496,32 +472,16 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
             syntax::TypeQualifierSpec::Layout(syntax::LayoutQualifier {
                 ids: syntax::NonEmpty(ids),
             }) => {
-                for id in ids {
-                    let (name, maybe_value_box) = if let &syntax::LayoutQualifierSpec::Identifier(
-                        syntax::Identifier(ref name),
-                        ref maybe_value_box,
-                    ) = id
-                    {
-                        (name, maybe_value_box)
-                    } else {
-                        let msg = format!("Unexpected layout qualifier spec: {id:?}");
-                        return Err(Error::Local(msg));
-                    };
-
-                    match (name.as_str(), maybe_value_box) {
-                        ("binding", Some(ref value_box)) => {
-                            // Currently we only expect int values for bindings.
-                            let value = if let syntax::Expr::IntConst(value) = **value_box {
-                                value
-                            } else {
-                                let msg = format!("Unexpected value: {:?}", **value_box);
-                                return Err(Error::Local(msg));
-                            };
-
-                            binding = Some(value as u32);
+                for id in simplify_layout_qualifiers(ids) {
+                    let (name, maybe_value) = id?;
+                    match (name, maybe_value) {
+                        // Currently we only expect int values for bindings.
+                        ("binding", Some(&syntax::Expr::IntConst(value))) => {
+                            binding = Some(value as u32)
                         }
-                        ("push_constant", None) => layout_qualifiers.push(name.clone()),
-                        ("std140", None) => layout_qualifiers.push(name.clone()),
+                        ("push_constant", None) => layout_qualifiers.push(name.to_owned()),
+                        ("std140", None) => layout_qualifiers.push(name.to_owned()),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as u32),
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -548,6 +508,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
         identifier,
         storage,
         binding,
+        set,
         layout_qualifiers,
         fields,
     })
@@ -556,8 +517,10 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
 type LocalSize = (u32, u32, u32);
 type ShaderIO = (LocalSize, Vec<VariableDeclaration>, Vec<BlockDeclaration>);
 
-fn analyze_shader(file: &Path) -> Result<ShaderIO, Error> {
-    let shader_code = fs::read_to_string(file)?;
+fn analyze_shader(path: &Path) -> Result<ShaderIO, Error> {
+    let shader_code = fs::read_to_string(path).map_err(|err| {
+        Error::Local(format!("File '{}' cannot be read: {err:?}", path.display()))
+    })?;
     let syntax::TranslationUnit(syntax::NonEmpty(external_declarations)) =
         syntax::ShaderStage::parse(shader_code)?;
 
@@ -599,6 +562,9 @@ pub struct ShaderModule {
     pub local_size: LocalSize,
     pub variable_declarations: Vec<VariableDeclaration>,
     pub block_declarations: Vec<BlockDeclaration>,
+
+    pub main_name: String,
+    pub present_name: String,
 }
 
 impl Deref for ShaderModule {
@@ -612,6 +578,8 @@ impl Deref for ShaderModule {
 impl ShaderModule {
     pub unsafe fn new(device: &Rc<Device>, source_path: &Path) -> Result<Rc<Self>, Error> {
         debug!("Creating shader module");
+        let (local_size, variable_declarations, block_declarations) = analyze_shader(source_path)?;
+
         let device = device.clone();
         let source_path = source_path.to_path_buf();
         let mtime = mtime(&source_path)?;
@@ -622,7 +590,8 @@ impl ShaderModule {
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
         let shader_module = device.create_shader_module(&shader_info, None)?;
 
-        let (local_size, variable_declarations, block_declarations) = analyze_shader(&source_path)?;
+        let main_name = "main".to_owned();
+        let present_name = "present".to_owned();
 
         Ok(Rc::new(ShaderModule {
             device,
@@ -632,6 +601,8 @@ impl ShaderModule {
             local_size,
             variable_declarations,
             block_declarations,
+            main_name,
+            present_name,
         }))
     }
 

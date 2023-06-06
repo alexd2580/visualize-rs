@@ -1,4 +1,4 @@
-use std::{ffi::CStr, mem, ops::Deref, rc::Rc};
+use std::{ffi::CString, mem, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -52,7 +52,8 @@ impl Pipeline {
             return Err(Error::Local(msg));
         }
 
-        let shader_entry_name = CStr::from_bytes_with_nul_unchecked(b"main\0");
+        let shader_entry_name = CString::new(shader_module.main_name.as_str())
+            .expect("Did not expect string conversion to fail");
         let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
             module: **shader_module,
             p_name: shader_entry_name.as_ptr(),

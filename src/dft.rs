@@ -1,4 +1,4 @@
-use std::{ffi::c_void, sync::Arc};
+use std::{ffi::c_void, mem, sync::Arc};
 
 use realfft::{RealFftPlanner, RealToComplex};
 use rustfft::num_complex::Complex;
@@ -13,7 +13,7 @@ pub struct Dft {
 
 impl Dft {
     pub fn new() -> Self {
-        let length = 4096;
+        let length = 128;
 
         let mut real_planner = RealFftPlanner::<f32>::new();
         let r2c = real_planner.plan_fft_forward(length);
@@ -44,9 +44,12 @@ impl Dft {
 
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
+            let size = self.output.len() as u32;
+            (&size as *const u32).copy_to(target.cast(), 1);
+            let target_data = target.add(mem::size_of::<i32>());
             self.output
                 .as_ptr()
-                .copy_to(target.cast(), self.output.len());
+                .copy_to(target_data.cast(), self.output.len());
         }
     }
 

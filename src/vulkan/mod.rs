@@ -564,6 +564,7 @@ impl Vulkan {
         }
 
         self.num_frames += 1;
+        self.binding_index = (self.binding_index + 1);
         Ok(())
     }
 
