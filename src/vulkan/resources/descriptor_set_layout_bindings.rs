@@ -1,6 +1,6 @@
-use std::{collections::HashMap, ops::Deref, rc::Rc};
+use std::{ops::Deref, rc::Rc};
 
-use log::{debug, warn};
+use log::debug;
 
 use ash::vk;
 
@@ -19,23 +19,18 @@ impl Deref for DescriptorSetLayoutBindings {
     }
 }
 
-fn collect_partitions<Key: std::cmp::Eq + std::hash::Hash + Clone, Value: std::fmt::Debug>(
-    iter: impl Iterator<Item = (Key, Value)>,
-) -> HashMap<Key, Vec<Value>> {
-    let mut hash_map = HashMap::new();
-    for (key, value) in iter {
-        let prev = match hash_map.get_mut(&key) {
-            Some(prev) => prev,
-            None => {
-                hash_map.insert(key.clone(), Vec::new());
-                hash_map.get_mut(&key)
-            }
-            .unwrap(),
-        };
+fn collect_partitions<Value: std::fmt::Debug>(
+    iter: impl Iterator<Item = (usize, Value)>,
+) -> Vec<Vec<Value>> {
+    let mut result = Vec::new();
+    for (index, value) in iter {
+        if index >= result.len() {
+            result.resize_with(index + 1, Vec::new);
+        }
 
-        prev.push(value);
+        result[index].push(value);
     }
-    hash_map
+    result
 }
 
 impl DescriptorSetLayoutBindings {
@@ -62,14 +57,8 @@ impl DescriptorSetLayoutBindings {
             .iter()
             .map(|declaration| {
                 (
-                    declaration.set.unwrap_or_else(|| {
-                        warn!("Assuming set=0 for block {}", declaration.name);
-                        0
-                    }),
-                    Self::make_binding(
-                        declaration.binding as u32,
-                        vk::DescriptorType::STORAGE_IMAGE,
-                    ),
+                    declaration.checked_set(),
+                    Self::make_binding(declaration.binding, vk::DescriptorType::STORAGE_IMAGE),
                 )
             });
 
@@ -81,18 +70,15 @@ impl DescriptorSetLayoutBindings {
             .filter(|declaration| declaration.binding.is_some())
             .map(|declaration| {
                 (
-                    declaration.set.unwrap_or_else(|| {
-                        warn!("Assuming set=0 for block {}", declaration.name);
-                        0
-                    }),
+                    declaration.checked_set(),
                     // Unwrap is safe, we have filtered before.
                     Self::make_binding(declaration.binding.unwrap(), declaration.storage),
                 )
             });
 
         let partitions = collect_partitions(variable_bindings.chain(block_bindings))
-            .drain()
-            .map(|(k, v)| (k, DescriptorSetLayoutBindings(v)))
+            .into_iter()
+            .map(DescriptorSetLayoutBindings)
             .collect();
 
         Ok(Rc::new(partitions))

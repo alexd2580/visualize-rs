@@ -52,7 +52,7 @@ fn run_main() -> Result<(), Error> {
     let vulkan = vulkan::Vulkan::new(&window, &args.shader_path)?;
 
     let audio = audio::Audio::new();
-    let dft = dft::Dft::new();
+    let dft = dft::Dft::new(4096);
     let dft_result_size = mem::size_of_val(dft.get_output_vec()) as u64;
     let dft_buffer = vulkan.new_multi_buffer("dft", dft_result_size)?;
 

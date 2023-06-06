@@ -12,9 +12,7 @@ pub struct Dft {
 }
 
 impl Dft {
-    pub fn new() -> Self {
-        let length = 128;
-
+    pub fn new(length: usize) -> Self {
         let mut real_planner = RealFftPlanner::<f32>::new();
         let r2c = real_planner.plan_fft_forward(length);
 

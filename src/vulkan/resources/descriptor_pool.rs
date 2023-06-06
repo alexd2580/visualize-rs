@@ -26,7 +26,7 @@ impl Deref for DescriptorPool {
 impl DescriptorPool {
     pub unsafe fn new(
         device: &Rc<Device>,
-        descriptor_set_layout_bindings: &DescriptorSetLayoutBindings,
+        descriptor_set_layout_binding_sets: &Vec<DescriptorSetLayoutBindings>,
         set_count: u32,
     ) -> Result<Rc<Self>, Error> {
         // TODO Check the way descriptors are allocated (set count, descriptor count etc.).
@@ -34,11 +34,13 @@ impl DescriptorPool {
         let device = device.clone();
 
         let mut accumulated_bindings = HashMap::new();
-        for binding in &**descriptor_set_layout_bindings {
-            let &old_count = accumulated_bindings
-                .get(&binding.descriptor_type)
-                .unwrap_or(&0);
-            accumulated_bindings.insert(binding.descriptor_type, old_count + 1);
+        for binding_set in descriptor_set_layout_binding_sets {
+            for binding in &**binding_set {
+                let &old_count = accumulated_bindings
+                    .get(&binding.descriptor_type)
+                    .unwrap_or(&0);
+                accumulated_bindings.insert(binding.descriptor_type, old_count + 1);
+            }
         }
 
         let descriptor_pool_sizes: Vec<vk::DescriptorPoolSize> = accumulated_bindings

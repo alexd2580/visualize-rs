@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref, rc::Rc};
+use std::{ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -24,32 +24,29 @@ impl Deref for DescriptorSetLayout {
 impl DescriptorSetLayout {
     pub unsafe fn new(
         device: &Rc<Device>,
-        descriptor_set_layout_binding_sets: &HashMap<u32, DescriptorSetLayoutBindings>,
-    ) -> Result<Rc<HashMap<u32, Self>>, Error> {
+        descriptor_set_layout_binding_sets: &[DescriptorSetLayoutBindings],
+    ) -> Result<Rc<Vec<Self>>, Error> {
         debug!("Creating descriptor set layout");
-        let set_layouts = descriptor_set_layout_binding_sets
-            .iter()
-            .map(|(&set_index, bindings)| {
-                let device = device.clone();
-                let descriptor_set_layout_create_info =
-                    vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
-                let descriptor_set_layout = device
-                    .create_descriptor_set_layout(&descriptor_set_layout_create_info, None)?;
 
-                Ok((
-                    set_index,
-                    DescriptorSetLayout {
-                        device,
-                        descriptor_set_layout,
-                    },
-                ))
+        let create_descriptor_set_layout = |bindings: &DescriptorSetLayoutBindings| {
+            let device = device.clone();
+            let descriptor_set_layout_create_info =
+                vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
+            let descriptor_set_layout =
+                device.create_descriptor_set_layout(&descriptor_set_layout_create_info, None)?;
+
+            Ok(DescriptorSetLayout {
+                device,
+                descriptor_set_layout,
             })
-            // Funny way of converting a iter<result> into result<hashmap>.
-            .collect::<Result<Vec<(u32, DescriptorSetLayout)>, Error>>()?
-            .into_iter()
-            .collect();
+        };
 
-        Ok(Rc::new(set_layouts))
+        Ok(Rc::new(
+            descriptor_set_layout_binding_sets
+                .iter()
+                .map(create_descriptor_set_layout)
+                .collect::<Result<_, Error>>()?,
+        ))
     }
 }
 

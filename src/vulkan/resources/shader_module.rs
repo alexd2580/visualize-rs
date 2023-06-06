@@ -1,6 +1,6 @@
 use filetime::FileTime;
 use glsl::{parser::Parse as _, syntax};
-use log::{debug, error};
+use log::{debug, error, warn};
 use std::{
     fs,
     io::{self, Cursor},
@@ -160,9 +160,18 @@ fn match_globals(
 pub struct VariableDeclaration {
     pub name: String,
     pub type_specifier: syntax::TypeSpecifierNonArray,
-    pub binding: i32,
-    pub set: Option<u32>,
+    pub binding: u32,
+    pub set: Option<usize>,
     pub type_format: Option<String>,
+}
+
+impl VariableDeclaration {
+    pub fn checked_set(&self) -> usize {
+        self.set.unwrap_or_else(|| {
+            warn!("Assuming set=0 for block {}", self.name);
+            0
+        })
+    }
 }
 
 fn match_init_declarator_list(
@@ -213,9 +222,11 @@ fn match_init_declarator_list(
                     let (name, maybe_value) = id?;
                     match (name, maybe_value) {
                         // Currently we only expect int values for bindings.
-                        ("binding", Some(&syntax::Expr::IntConst(value))) => binding = Some(value),
+                        ("binding", Some(&syntax::Expr::IntConst(value))) => {
+                            binding = Some(value as u32)
+                        }
                         ("rgba32f", None) => type_format = Some(name.to_owned()),
-                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as u32),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -412,7 +423,7 @@ pub struct BlockDeclaration {
     pub identifier: Option<String>,
     pub storage: vk::DescriptorType,
     pub binding: Option<u32>,
-    pub set: Option<u32>,
+    pub set: Option<usize>,
     pub layout_qualifiers: Vec<String>,
     pub fields: Vec<BlockField>,
 }
@@ -421,6 +432,13 @@ impl BlockDeclaration {
     pub fn byte_size(&self) -> Option<u32> {
         self.fields.iter().fold(Some(0), |acc, item| {
             acc.and_then(|acc| item.byte_size().map(|item| acc + item))
+        })
+    }
+
+    pub fn checked_set(&self) -> usize {
+        self.set.unwrap_or_else(|| {
+            warn!("Assuming set=0 for block {}", self.name);
+            0
         })
     }
 }
@@ -481,7 +499,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                         }
                         ("push_constant", None) => layout_qualifiers.push(name.to_owned()),
                         ("std140", None) => layout_qualifiers.push(name.to_owned()),
-                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as u32),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -612,6 +630,31 @@ impl ShaderModule {
 
     pub unsafe fn rebuild(&self) -> Result<Rc<Self>, Error> {
         ShaderModule::new(&self.device, &self.source_path)
+    }
+
+    pub fn variable_declaration(&self, name: &str) -> Result<&VariableDeclaration, Error> {
+        self.variable_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .ok_or_else(|| {
+                let msg = format!("No variable '{name}' within shader module.");
+                Error::Local(msg)
+            })
+    }
+
+    pub fn block_declaration(&self, name: &str) -> Result<&BlockDeclaration, Error> {
+        self.block_declarations
+            .iter()
+            .find(|declaration| {
+                declaration
+                    .identifier
+                    .as_ref()
+                    .is_some_and(|val| val == name)
+            })
+            .ok_or_else(|| {
+                let msg = format!("No block '{name}' within shader module.");
+                Error::Local(msg)
+            })
     }
 }
 

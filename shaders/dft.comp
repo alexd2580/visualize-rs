@@ -1,0 +1,28 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant, std140) uniform PushConstants {
+  layout(offset = 0) uint frame_index;
+} constants;
+
+layout(rgba32f, set=0, binding = 0) uniform image2D present;
+
+layout(binding = 1) buffer Dft {
+    int size;
+    vec2 data[];
+} dft;
+
+void main() {
+    ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+    ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    vec2 pixel_coords = vec2(ipixel_coords) / iimage_size;
+
+    int dft_index = int(pixel_coords.x * dft.size);
+    float dft_at_index = length(dft.data[dft_index]);
+    float dft_height = dft_at_index / 10;
+    bool pixel_below_dft = pixel_coords.y < dft_height;
+
+    ivec2 istore_coords = ivec2(ipixel_coords.x, iimage_size.y - 1 - ipixel_coords.y);
+    imageStore(present, istore_coords, vec4(pixel_below_dft ? 1 : 0, 0, 0, 1));
+}

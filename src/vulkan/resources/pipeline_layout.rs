@@ -26,7 +26,7 @@ impl<PushConstants> Deref for PipelineLayout<PushConstants> {
 impl<PushConstants> PipelineLayout<PushConstants> {
     pub unsafe fn new(
         device: &Rc<Device>,
-        descriptor_set_layout: &HashMap<u32, DescriptorSetLayout>,
+        descriptor_set_layouts: &[DescriptorSetLayout],
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating pipeline layout");
         let device = device.clone();
@@ -38,7 +38,7 @@ impl<PushConstants> PipelineLayout<PushConstants> {
             .offset(0)
             .build();
         let push_constant_ranges = [push_constant_range];
-        let descriptor_set_layouts = [**descriptor_set_layout];
+        let descriptor_set_layouts: Vec<_> = descriptor_set_layouts.iter().map(|x| **x).collect();
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constant_ranges)
             .set_layouts(&descriptor_set_layouts);

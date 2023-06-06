@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc, collections::HashMap};
+use std::{path::Path, rc::Rc};
 
 use ash::vk;
 use log::{debug, error, info, warn};
@@ -47,12 +47,12 @@ pub struct Vulkan {
     image_acquired_semaphore: Rc<Semaphore>,
     compute_complete_semaphore: Rc<Semaphore>,
     reuse_command_buffer_fence: Rc<Fence>,
-    descriptor_sets: Rc<DescriptorSets>,
+    descriptor_sets_sets: Rc<Vec<DescriptorSets>>,
     _descriptor_pool: Rc<DescriptorPool>,
     pipeline: Rc<Pipeline>,
     pipeline_layout: Rc<PipelineLayout<PushConstants>>,
-    _descriptor_set_layouts: Rc<HashMap<u32, DescriptorSetLayout>>,
-    _descriptor_set_layout_binding_sets: Rc<HashMap<u32, DescriptorSetLayoutBindings>>,
+    _descriptor_set_layouts: Rc<Vec<DescriptorSetLayout>>,
+    _descriptor_set_layout_binding_sets: Rc<Vec<DescriptorSetLayoutBindings>>,
     compute_shader_module: Rc<ShaderModule>,
     sampler: Rc<Sampler>,
     image_views: Rc<ImageViews>,
@@ -121,17 +121,21 @@ impl Vulkan {
     }
 
     unsafe fn initialize_descriptor_sets(&self) {
-        debug!("Initializing descriptor sets");
+        debug!("Initializing present descriptor sets");
 
-        let image_descriptors: Vec<(
-            vk::DescriptorType,
-            [vk::DescriptorImageInfo; 1],
-            vk::DescriptorSet,
-            u32,
-        )> = self
+        let present_declaration = self
+            .compute_shader_module
+            .variable_declaration(&self.compute_shader_module.present_name)
+            .expect("Present image not found in shader module");
+
+        let present_binding = present_declaration.binding;
+        let present_set = present_declaration.checked_set();
+        let present_descriptor_sets = &self.descriptor_sets_sets[present_set];
+
+        let image_descriptors = self
             .image_views
             .iter()
-            .zip(self.descriptor_sets.iter())
+            .zip(present_descriptor_sets.iter())
             .map(|(image_view, descriptor_set)| {
                 let image_info = vk::DescriptorImageInfo::builder()
                     .image_view(*image_view)
@@ -143,11 +147,10 @@ impl Vulkan {
                     vk::DescriptorType::STORAGE_IMAGE,
                     [image_info],
                     *descriptor_set,
-                    // Hardcode sampler to binding 0.
-                    0,
+                    present_binding,
                 )
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         self.write_descriptor_sets(&image_descriptors, &[]);
     }
@@ -185,12 +188,12 @@ impl Vulkan {
             let pipeline = Pipeline::new(&device, &compute_shader_module, &pipeline_layout)?;
             let descriptor_pool = DescriptorPool::new(
                 &device,
-                &descriptor_set_layout_bindings,
+                &descriptor_set_layout_binding_sets,
                 surface_info.desired_image_count,
             )?;
-            let descriptor_sets = DescriptorSets::new(
+            let descriptor_sets_sets = DescriptorSets::new(
                 &device,
-                &descriptor_set_layout,
+                &descriptor_set_layouts,
                 &descriptor_pool,
                 surface_info.desired_image_count,
             )?;
@@ -223,7 +226,7 @@ impl Vulkan {
                 pipeline_layout,
                 pipeline,
                 _descriptor_pool: descriptor_pool,
-                descriptor_sets,
+                descriptor_sets_sets,
                 reuse_command_buffer_fence,
                 image_acquired_semaphore,
                 compute_complete_semaphore,
@@ -302,29 +305,18 @@ impl Vulkan {
         size: vk::DeviceSize,
     ) -> Result<Rc<MultiBuffer>, Error> {
         let num_buffers = self.surface_info.desired_image_count as usize;
-        // TODO num buffers?
+        // TODO num buffers? What does this mean?
         unsafe {
-            let shader_block_decl = self
-                .compute_shader_module
-                .block_declarations
-                .iter()
-                .find(|shader_module| {
-                    shader_module
-                        .identifier
-                        .as_ref()
-                        .is_some_and(|val| val == name)
-                })
-                .ok_or_else(|| {
-                    let msg = format!("No block '{name}' within shader module.");
-                    Error::Local(msg)
-                })?;
+            let declaration = self.compute_shader_module.block_declaration(name)?;
+            let storage = declaration.storage;
 
-            let storage = shader_block_decl.storage;
-
-            let binding = shader_block_decl.binding.ok_or_else(|| {
+            let binding = declaration.binding.ok_or_else(|| {
                 let msg = format!("Block '{name}' does not specify a binding.");
                 Error::Local(msg)
             })?;
+
+            let set = declaration.checked_set();
+            let descriptor_sets = &self.descriptor_sets_sets[set];
 
             let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
 
@@ -336,7 +328,7 @@ impl Vulkan {
             )> = buffer
                 .buffers
                 .iter()
-                .zip(self.descriptor_sets.iter())
+                .zip(descriptor_sets.iter())
                 .map(|(buffer_unit, descriptor_set)| {
                     let buffer_info = vk::DescriptorBufferInfo::builder()
                         .buffer(**buffer_unit.buffer)
@@ -479,14 +471,20 @@ impl Vulkan {
         );
     }
 
-    unsafe fn bind_descriptor_set(&self, descriptor_set_index: usize) {
-        let bind_descriptor_sets = [self.descriptor_sets[descriptor_set_index]];
+    unsafe fn bind_descriptor_set(&self, descriptor_set_indices: &[usize]) {
+        let descriptor_sets = self
+            .descriptor_sets_sets
+            .iter()
+            .zip(descriptor_set_indices.iter())
+            .map(|(descriptor_set, &index_within_set)| descriptor_set[index_within_set])
+            .collect::<Vec<_>>();
+
         self.device.cmd_bind_descriptor_sets(
             **self.command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             **self.pipeline_layout,
             0,
-            &bind_descriptor_sets,
+            &descriptor_sets,
             &[],
         );
     }
@@ -543,7 +541,7 @@ impl Vulkan {
             num_frames: self.num_frames,
         };
         self.push_constants(&push_constants);
-        self.bind_descriptor_set(present_index);
+        self.bind_descriptor_set(&[present_index, self.binding_index]);
         self.dispatch();
 
         // Transition image to the "PRESENT_SRC" layout for presentation.
@@ -564,7 +562,9 @@ impl Vulkan {
         }
 
         self.num_frames += 1;
-        self.binding_index = (self.binding_index + 1);
+        self.binding_index =
+            (self.binding_index + 1) % self.surface_info.desired_image_count as usize;
+
         Ok(())
     }
 

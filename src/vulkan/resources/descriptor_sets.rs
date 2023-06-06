@@ -25,20 +25,29 @@ impl Deref for DescriptorSets {
 impl DescriptorSets {
     pub unsafe fn new(
         device: &Device,
-        descriptor_set_layout: &DescriptorSetLayout,
+        descriptor_set_layouts: &[DescriptorSetLayout],
         descriptor_pool: &DescriptorPool,
         num_sets: u32,
-    ) -> Result<Rc<Self>, Error> {
+    ) -> Result<Rc<Vec<Self>>, Error> {
         debug!("Creating descriptor sets");
 
-        let descriptor_set_layout = **descriptor_set_layout;
-        let descriptor_set_layouts = vec![descriptor_set_layout; num_sets as usize];
-        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(**descriptor_pool)
-            .set_layouts(&descriptor_set_layouts);
+        let create_descriptor_set = |descriptor_set_layout: &DescriptorSetLayout| {
+            let descriptor_set_layout = **descriptor_set_layout;
+            let descriptor_set_layouts = vec![descriptor_set_layout; num_sets as usize];
+            let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(**descriptor_pool)
+                .set_layouts(&descriptor_set_layouts);
 
-        let descriptor_sets = device.allocate_descriptor_sets(&descriptor_set_allocate_info)?;
+            let descriptor_sets = device.allocate_descriptor_sets(&descriptor_set_allocate_info)?;
 
-        Ok(Rc::new(DescriptorSets { descriptor_sets }))
+            Ok(DescriptorSets { descriptor_sets })
+        };
+
+        Ok(Rc::new(
+            descriptor_set_layouts
+                .iter()
+                .map(create_descriptor_set)
+                .collect::<Result<_, Error>>()?,
+        ))
     }
 }

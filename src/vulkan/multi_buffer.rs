@@ -58,7 +58,6 @@ impl MultiBuffer {
     }
 
     pub fn mapped(&self, index: usize) -> *mut c_void {
-        debug!("{index}");
         **self.buffers[index].mapping
     }
 }
