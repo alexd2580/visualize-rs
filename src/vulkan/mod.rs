@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc};
+use std::{path::Path, rc::Rc, collections::HashMap};
 
 use ash::vk;
 use log::{debug, error, info, warn};
@@ -51,8 +51,8 @@ pub struct Vulkan {
     _descriptor_pool: Rc<DescriptorPool>,
     pipeline: Rc<Pipeline>,
     pipeline_layout: Rc<PipelineLayout<PushConstants>>,
-    _descriptor_set_layout: Rc<DescriptorSetLayout>,
-    _descriptor_set_layout_bindings: Rc<DescriptorSetLayoutBindings>,
+    _descriptor_set_layouts: Rc<HashMap<u32, DescriptorSetLayout>>,
+    _descriptor_set_layout_binding_sets: Rc<HashMap<u32, DescriptorSetLayoutBindings>>,
     compute_shader_module: Rc<ShaderModule>,
     sampler: Rc<Sampler>,
     image_views: Rc<ImageViews>,
@@ -177,11 +177,11 @@ impl Vulkan {
             let sampler = Sampler::new(&device)?;
 
             let compute_shader_module = ShaderModule::new(&device, compute_shader_path)?;
-            let descriptor_set_layout_bindings =
+            let descriptor_set_layout_binding_sets =
                 DescriptorSetLayoutBindings::new(&compute_shader_module)?;
-            let descriptor_set_layout =
-                DescriptorSetLayout::new(&device, &descriptor_set_layout_bindings)?;
-            let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layout)?;
+            let descriptor_set_layouts =
+                DescriptorSetLayout::new(&device, &descriptor_set_layout_binding_sets)?;
+            let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layouts)?;
             let pipeline = Pipeline::new(&device, &compute_shader_module, &pipeline_layout)?;
             let descriptor_pool = DescriptorPool::new(
                 &device,
@@ -218,8 +218,8 @@ impl Vulkan {
                 image_views,
                 sampler,
                 compute_shader_module,
-                _descriptor_set_layout_bindings: descriptor_set_layout_bindings,
-                _descriptor_set_layout: descriptor_set_layout,
+                _descriptor_set_layout_binding_sets: descriptor_set_layout_binding_sets,
+                _descriptor_set_layouts: descriptor_set_layouts,
                 pipeline_layout,
                 pipeline,
                 _descriptor_pool: descriptor_pool,

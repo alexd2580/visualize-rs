@@ -26,7 +26,7 @@ impl<PushConstants> Deref for PipelineLayout<PushConstants> {
 impl<PushConstants> PipelineLayout<PushConstants> {
     pub unsafe fn new(
         device: &Rc<Device>,
-        descriptor_set_layout: &DescriptorSetLayout,
+        descriptor_set_layout: &HashMap<u32, DescriptorSetLayout>,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating pipeline layout");
         let device = device.clone();

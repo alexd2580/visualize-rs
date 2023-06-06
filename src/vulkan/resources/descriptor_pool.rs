@@ -8,6 +8,8 @@ use crate::error::Error;
 
 use super::{descriptor_set_layout_bindings::DescriptorSetLayoutBindings, device::Device};
 
+/// Pool holding memory for allocation of descriptors. Does not allocate the memory that the
+/// descriptors are backed with, only the descriptors themselves.
 pub struct DescriptorPool {
     device: Rc<Device>,
     descriptor_pool: vk::DescriptorPool,
@@ -27,6 +29,7 @@ impl DescriptorPool {
         descriptor_set_layout_bindings: &DescriptorSetLayoutBindings,
         set_count: u32,
     ) -> Result<Rc<Self>, Error> {
+        // TODO Check the way descriptors are allocated (set count, descriptor count etc.).
         debug!("Creating descriptor pool");
         let device = device.clone();
 
