@@ -53,36 +53,36 @@ fn init_input_stream(
         .unwrap()
 }
 
-fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stream {
-    let device = host.default_output_device().unwrap();
-    let desired_sample_format = cpal::SampleFormat::F32;
-    let config = choose_stream_config(
-        device.supported_output_configs().unwrap(),
-        2,
-        cpal::SampleRate(desired_sample_rate),
-        desired_sample_format,
-    )
-    .unwrap();
-
-    let print_error = |err| eprintln!("Audio output error: {}", err);
-
-    let mut samples_written = 0;
-    let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
-        let frequency = 200.0;
-        for (index, channels) in data.chunks_mut(2).enumerate() {
-            let x_s = (samples_written + index) as f32 / 44100.0
-                * (2.0 * std::f32::consts::PI)
-                * frequency;
-            channels[0] = x_s.sin() / 10.0;
-            channels[1] = x_s.sin() / 10.0;
-        }
-        samples_written += data.len() / 2;
-    };
-
-    device
-        .build_output_stream(&config, write_silence, print_error)
-        .unwrap()
-}
+// fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stream {
+//     let device = host.default_output_device().unwrap();
+//     let desired_sample_format = cpal::SampleFormat::F32;
+//     let config = choose_stream_config(
+//         device.supported_output_configs().unwrap(),
+//         2,
+//         cpal::SampleRate(desired_sample_rate),
+//         desired_sample_format,
+//     )
+//     .unwrap();
+//
+//     let print_error = |err| eprintln!("Audio output error: {}", err);
+//
+//     let mut samples_written = 0;
+//     let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
+//         let frequency = 200.0;
+//         for (index, channels) in data.chunks_mut(2).enumerate() {
+//             let x_s = (samples_written + index) as f32 / 44100.0
+//                 * (2.0 * std::f32::consts::PI)
+//                 * frequency;
+//             channels[0] = x_s.sin() / 10.0;
+//             channels[1] = x_s.sin() / 10.0;
+//         }
+//         samples_written += data.len() / 2;
+//     };
+//
+//     device
+//         .build_output_stream(&config, write_silence, print_error)
+//         .unwrap()
+// }
 
 pub struct Audio {
     ring_buffer: Arc<buffer::Buffer>,
@@ -91,7 +91,7 @@ pub struct Audio {
     _sample_rate: u32,
 
     _input_stream: cpal::Stream,
-    _output_stream: cpal::Stream,
+    // _output_stream: cpal::Stream,
 }
 
 impl Audio {
@@ -104,18 +104,18 @@ impl Audio {
 
         debug!("Initializing audio streams");
         let input_stream = init_input_stream(&host, sample_rate, ring_buffer.clone());
-        let output_stream = init_output_stream(&host, sample_rate);
+        // let output_stream = init_output_stream(&host, sample_rate);
 
         debug!("Running audio streams");
         input_stream.play().unwrap();
-        output_stream.play().unwrap();
+        // output_stream.play().unwrap();
 
         Audio {
             ring_buffer,
             _host: host,
             _sample_rate: sample_rate,
             _input_stream: input_stream,
-            _output_stream: output_stream,
+            // _output_stream: output_stream,
         }
     }
 
