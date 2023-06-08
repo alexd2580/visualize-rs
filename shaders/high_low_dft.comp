@@ -8,18 +8,42 @@ layout(push_constant, std140) uniform PushConstants {
 
 layout(rgba32f, set=0, binding = 0) uniform image2D present;
 
-layout(binding = 1) buffer Dft {
+layout(binding = 1) buffer Signal {
+    int size;
+    int position;
+    float data[];
+} signal;
+layout(binding = 2) buffer LowPass {
+    int size;
+    int position;
+    float data[];
+} low_pass;
+layout(binding = 3) buffer HighPass {
+    int size;
+    int position;
+    float data[];
+} high_pass;
+
+layout(binding = 4) buffer Dft {
     int size;
     vec2 data[];
-} dft;
+} signal_dft;
+layout(binding = 5) buffer DftLowPass {
+    int size;
+    vec2 data[];
+} low_pass_dft;
+layout(binding = 6) buffer DftHighPass {
+    int size;
+    vec2 data[];
+} high_pass_dft;
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     vec2 pixel_coords = vec2(ipixel_coords) / iimage_size;
 
-    int dft_index = 1 + int(pixel_coords.x * dft.size);
-    float dft_at_index = length(dft.data[dft_index]);
+    int dft_index = 1 + int(pixel_coords.x * signal_dft.size);
+    float dft_at_index = length(signal_dft.data[dft_index]);
     float dft_height = dft_at_index;
     bool pixel_below_dft = pixel_coords.y < dft_height;
 

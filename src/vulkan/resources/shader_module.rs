@@ -168,7 +168,7 @@ pub struct VariableDeclaration {
 impl VariableDeclaration {
     pub fn checked_set(&self) -> usize {
         self.set.unwrap_or_else(|| {
-            warn!("Assuming set=0 for block {}", self.name);
+            warn!("Assuming set=0 for variable {}", self.name);
             0
         })
     }
