@@ -1,34 +1,33 @@
 use std::{path::Path, rc::Rc};
 
 use ash::vk;
+use filetime::FileTime;
 use log::{debug, error, info, warn};
 use winit::event_loop::ControlFlow;
 
 use crate::{
     error::Error,
-    vulkan::resources::{
-        descriptor_pool::DescriptorPool, descriptor_set_layout::DescriptorSetLayout,
-        descriptor_set_layout_bindings::DescriptorSetLayoutBindings, fence::Fence,
-        image_views::ImageViews, images::Images, semaphore::Semaphore, shader_module::ShaderModule,
-    },
+    utils::mtime,
     window::{App, Window},
 };
 
+pub mod multi_buffer;
 pub mod resources;
 
 use self::{
     multi_buffer::MultiBuffer,
     resources::{
         command_buffer::CommandBuffer, command_pool::CommandPool, compute_queue::ComputeQueue,
-        descriptor_sets::DescriptorSets, device::Device, entry::Entry,
-        image_subresource_range::ImageSubresourceRange, instance::Instance,
-        physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
-        sampler::Sampler, surface::Surface, surface_info::SurfaceInfo,
+        descriptor_pool::DescriptorPool, descriptor_set_layout::DescriptorSetLayout,
+        descriptor_set_layout_bindings::DescriptorSetLayoutBindings,
+        descriptor_sets::DescriptorSets, device::Device, entry::Entry, fence::Fence,
+        image_subresource_range::ImageSubresourceRange, image_views::ImageViews, images::Images,
+        instance::Instance, physical_device::PhysicalDevice, pipeline::Pipeline,
+        pipeline_layout::PipelineLayout, sampler::Sampler, semaphore::Semaphore,
+        shader_module::ShaderModule, surface::Surface, surface_info::SurfaceInfo,
         surface_loader::SurfaceLoader, swapchain::Swapchain, swapchain_loader::SwapchainLoader,
     },
 };
-
-pub mod multi_buffer;
 
 // This struct is not supposed to be read on the CPU, it only maps the structure of the push
 // constants block so that it can be written to the gpu memory properly.
@@ -54,6 +53,7 @@ pub struct Vulkan {
     _descriptor_set_layouts: Rc<Vec<DescriptorSetLayout>>,
     _descriptor_set_layout_binding_sets: Rc<Vec<DescriptorSetLayoutBindings>>,
     compute_shader_module: Rc<ShaderModule>,
+    compute_shader_module_mtime: FileTime,
     sampler: Rc<Sampler>,
     image_views: Rc<ImageViews>,
     images: Rc<Images>,
@@ -128,7 +128,9 @@ impl Vulkan {
             .variable_declaration(&self.compute_shader_module.present_name)
             .expect("Present image not found in shader module");
 
-        let present_binding = present_declaration.binding;
+        let present_binding = present_declaration
+            .binding
+            .expect("Present image has bo binding");
         let present_set = present_declaration.checked_set();
         let present_descriptor_sets = &self.descriptor_sets_sets[present_set];
 
@@ -179,6 +181,7 @@ impl Vulkan {
                 ImageViews::new(&device, &images, &surface_info, &image_subresource_range)?;
             let sampler = Sampler::new(&device)?;
 
+            let compute_shader_module_mtime = mtime(compute_shader_path)?;
             let compute_shader_module = ShaderModule::new(&device, compute_shader_path)?;
             let descriptor_set_layout_binding_sets =
                 DescriptorSetLayoutBindings::new(&compute_shader_module)?;
@@ -220,6 +223,7 @@ impl Vulkan {
                 images,
                 image_views,
                 sampler,
+                compute_shader_module_mtime,
                 compute_shader_module,
                 _descriptor_set_layout_binding_sets: descriptor_set_layout_binding_sets,
                 _descriptor_set_layouts: descriptor_set_layouts,
@@ -244,18 +248,23 @@ impl Vulkan {
     }
 
     unsafe fn recompile_shader_if_modified(&mut self) -> Result<(), Error> {
-        if self.compute_shader_module.was_modified() {
+        if mtime(&self.compute_shader_module.source_path)? > self.compute_shader_module_mtime {
+            self.compute_shader_module_mtime = mtime(&self.compute_shader_module.source_path)?;
             info!("Shader source modified, recompiling...");
             self.wait_idle();
 
-            let compute_shader_module = self.compute_shader_module.rebuild()?;
-            let pipeline =
-                Pipeline::new(&self.device, &compute_shader_module, &self.pipeline_layout)?;
+            match self.compute_shader_module.rebuild() {
+                Ok(compute_shader_module) => {
+                    let pipeline =
+                        Pipeline::new(&self.device, &compute_shader_module, &self.pipeline_layout)?;
 
-            self.compute_shader_module = compute_shader_module;
-            self.pipeline = pipeline;
+                    self.compute_shader_module = compute_shader_module;
+                    self.pipeline = pipeline;
 
-            self.initialize_descriptor_sets();
+                    self.initialize_descriptor_sets();
+                }
+                Err(err) => error!("{}", err),
+            }
         }
         Ok(())
     }

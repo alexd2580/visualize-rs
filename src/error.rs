@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug)]
 pub enum CpalError {
     SupportedStreamConfigsError(cpal::SupportedStreamConfigsError),
@@ -13,6 +15,21 @@ pub enum Error {
     Io(std::io::Error),
     Parse(glsl::parser::ParseError),
     Cpal(CpalError),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::Local(str) => write!(f, "{str}"),
+            Error::Vk(code) => write!(f, "{code}"),
+            Error::Os(os_error) => write!(f, "OS Error\n{os_error}"),
+            Error::Io(io_error) => write!(f, "IO Error\n{io_error}"),
+            Error::Parse(glsl::parser::ParseError { info }) => {
+                write!(f, "Failed to parse GLSL\n{info}")
+            }
+            Error::Cpal(cpal_error) => write!(f, "CPAL Error\n{cpal_error:?}"),
+        }
+    }
 }
 
 impl From<ash::vk::Result> for Error {

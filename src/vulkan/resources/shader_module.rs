@@ -1,6 +1,5 @@
-use filetime::FileTime;
 use glsl::{parser::Parse as _, syntax};
-use log::{debug, error, warn};
+use log::{debug, warn};
 use std::{
     fs,
     io::{self, Cursor},
@@ -69,24 +68,18 @@ pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
     Ok(result)
 }
 
-fn compile_shader_file(file: &Path) -> io::Result<Vec<u32>> {
+fn compile_shader_file(file: &Path) -> Result<Vec<u32>, Error> {
     let res = Command::new("glslc")
         .args([file.to_str().unwrap(), "-o", "shaders/out.spv"])
         .output()?;
 
     if res.status.code() != Some(0) {
-        error!("\n{}", str::from_utf8(&res.stderr).unwrap());
+        let msg = str::from_utf8(&res.stderr).unwrap().to_owned();
+        return Err(Error::Local(msg));
     }
 
     let mut shader_spirv_bytes = Cursor::new(fs::read("shaders/out.spv")?);
-    read_spv(&mut shader_spirv_bytes)
-}
-
-fn mtime(path: &Path) -> Result<FileTime, Error> {
-    let source_metadata = path.metadata().map_err(|err| {
-        Error::Local(format!("File '{}' cannot be read: {err:?}", path.display()))
-    })?;
-    Ok(FileTime::from_last_modification_time(&source_metadata))
+    Ok(read_spv(&mut shader_spirv_bytes)?)
 }
 
 fn simplify_layout_qualifiers(
@@ -147,7 +140,7 @@ fn match_globals(
                 }
             }
             unexpected => {
-                let msg = format!("Unexpected type qualifier spec: {unexpected:?}");
+                let msg = format!("Unexpected global type qualifier spec: {unexpected:?}");
                 return Err(Error::Local(msg));
             }
         }
@@ -160,7 +153,7 @@ fn match_globals(
 pub struct VariableDeclaration {
     pub name: String,
     pub type_specifier: syntax::TypeSpecifierNonArray,
-    pub binding: u32,
+    pub binding: Option<u32>,
     pub set: Option<usize>,
     pub type_format: Option<String>,
 }
@@ -176,7 +169,7 @@ impl VariableDeclaration {
 
 fn match_init_declarator_list(
     init_declarator_list: &syntax::InitDeclaratorList,
-) -> Result<VariableDeclaration, Error> {
+) -> Result<Option<VariableDeclaration>, Error> {
     let &syntax::InitDeclaratorList {
         head:
             syntax::SingleDeclaration {
@@ -212,6 +205,7 @@ fn match_init_declarator_list(
 
     for type_qualifier_spec in type_qualifier_specs {
         match type_qualifier_spec {
+            syntax::TypeQualifierSpec::Storage(syntax::StorageQualifier::Const) => return Ok(None),
             // We assume that the storage is `Uniform`.
             syntax::TypeQualifierSpec::Storage(syntax::StorageQualifier::Uniform) => {}
             // The layout type qualifier contains the binding and the type format.
@@ -235,13 +229,11 @@ fn match_init_declarator_list(
                 }
             }
             unexpected => {
-                let msg = format!("Unexpected type qualifier spec: {unexpected:?}");
+                let msg = format!("Unexpected variable type qualifier spec: {unexpected:?}");
                 return Err(Error::Local(msg));
             }
         }
     }
-
-    let binding = binding.ok_or_else(|| Error::Local("No binding found".to_owned()))?;
 
     let type_specifier = type_specifier.clone();
 
@@ -272,13 +264,13 @@ fn match_init_declarator_list(
         return Err(Error::Local(msg));
     }
 
-    Ok(VariableDeclaration {
+    Ok(Some(VariableDeclaration {
         name,
         type_specifier,
         binding,
         set,
         type_format,
-    })
+    }))
 }
 
 #[derive(Debug)]
@@ -358,7 +350,7 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                     }
                 }
                 unexpected => {
-                    let msg = format!("Unexpected type qualifier spec: {unexpected:?}");
+                    let msg = format!("Unexpected block field type qualifier spec: {unexpected:?}");
                     return Err(Error::Local(msg));
                 }
             }
@@ -508,7 +500,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                 }
             }
             unexpected => {
-                let msg = format!("Unexpected type qualifier spec: {unexpected:?}");
+                let msg = format!("Unexpected block type qualifier spec: {unexpected:?}");
                 return Err(Error::Local(msg));
             }
         }
@@ -556,7 +548,9 @@ fn analyze_shader(path: &Path) -> Result<ShaderIO, Error> {
                 }
                 // Init declarator lists define images accessed via samplers.
                 syntax::Declaration::InitDeclaratorList(init_declarator_list) => {
-                    declarations.push(match_init_declarator_list(init_declarator_list)?)
+                    match_init_declarator_list(init_declarator_list)?
+                        .into_iter()
+                        .for_each(|declaration| declarations.push(declaration))
                 }
                 syntax::Declaration::Block(block) => blocks.push(match_block(block)?),
                 // Ignore the following.
@@ -574,8 +568,7 @@ fn analyze_shader(path: &Path) -> Result<ShaderIO, Error> {
 
 pub struct ShaderModule {
     device: Rc<Device>,
-    source_path: PathBuf,
-    mtime: FileTime,
+    pub source_path: PathBuf,
     shader_module: vk::ShaderModule,
     pub local_size: LocalSize,
     pub variable_declarations: Vec<VariableDeclaration>,
@@ -600,7 +593,6 @@ impl ShaderModule {
 
         let device = device.clone();
         let source_path = source_path.to_path_buf();
-        let mtime = mtime(&source_path)?;
 
         debug!("Compiling shader");
         let shader_content = compile_shader_file(&source_path)?;
@@ -614,7 +606,6 @@ impl ShaderModule {
         Ok(Rc::new(ShaderModule {
             device,
             source_path,
-            mtime,
             shader_module,
             local_size,
             variable_declarations,
@@ -622,10 +613,6 @@ impl ShaderModule {
             main_name,
             present_name,
         }))
-    }
-
-    pub fn was_modified(&self) -> bool {
-        mtime(&self.source_path).unwrap() > self.mtime
     }
 
     pub unsafe fn rebuild(&self) -> Result<Rc<Self>, Error> {

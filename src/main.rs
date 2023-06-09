@@ -3,7 +3,7 @@ use std::{mem, rc::Rc};
 use clap::Parser;
 
 use error::Error;
-use log::info;
+use log::{error, info};
 
 mod audio;
 mod dft;
@@ -12,6 +12,7 @@ mod ring_buffer;
 mod thread_shared;
 mod vulkan;
 mod window;
+mod utils;
 
 struct App {
     audio: audio::Audio,
@@ -55,13 +56,25 @@ impl window::App for App {
             self.high_pass.sample(x);
         }
 
-        let target = self.signal_gpu.mapped(self.vulkan.binding_index);
+        let target = self.signal_gpu.mapped(0);
+        self.audio.left.write_to_pointer(read_index, target);
+        let target = self.signal_gpu.mapped(1);
+        self.audio.left.write_to_pointer(read_index, target);
+        let target = self.signal_gpu.mapped(2);
         self.audio.left.write_to_pointer(read_index, target);
 
-        let target = self.low_pass_gpu.mapped(self.vulkan.binding_index);
+        let target = self.low_pass_gpu.mapped(0);
+        self.low_pass.write_to_pointer(read_index, target);
+        let target = self.low_pass_gpu.mapped(1);
+        self.low_pass.write_to_pointer(read_index, target);
+        let target = self.low_pass_gpu.mapped(2);
         self.low_pass.write_to_pointer(read_index, target);
 
-        let target = self.high_pass_gpu.mapped(self.vulkan.binding_index);
+        let target = self.high_pass_gpu.mapped(0);
+        self.high_pass.write_to_pointer(read_index, target);
+        let target = self.high_pass_gpu.mapped(1);
+        self.high_pass.write_to_pointer(read_index, target);
+        let target = self.high_pass_gpu.mapped(2);
         self.high_pass.write_to_pointer(read_index, target);
 
         run_dft(
@@ -128,10 +141,10 @@ fn run_main() -> Result<(), Error> {
     let audio = audio::Audio::new(audio_buffer_size)?;
     let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes)?;
 
-    let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.5);
+    let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.02);
     let low_pass_gpu = vulkan.new_multi_buffer("low_pass", audio_buffer_bytes)?;
 
-    let high_pass = audio::high_pass::HighPass::new(audio_buffer_size, 0.01);
+    let high_pass = audio::high_pass::HighPass::new(audio_buffer_size, 0.1);
     let high_pass_gpu = vulkan.new_multi_buffer("high_pass", audio_buffer_bytes)?;
 
     let dft_size = args.dft_size as f32;
@@ -177,6 +190,8 @@ fn run_main() -> Result<(), Error> {
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
     log::info!("Initializing...");
-    run_main().unwrap();
+    if let Err(err) = run_main() {
+        error!("{}", err);
+    }
     log::info!("Terminating...");
 }

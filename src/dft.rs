@@ -52,11 +52,10 @@ impl Dft {
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
             let size = self.output.len() as u32;
-            (&size as *const u32).copy_to(target.cast(), 1);
-            let target_data = target.add(mem::size_of::<i32>());
-            self.output
-                .as_ptr()
-                .copy_to(target_data.cast(), self.output.len());
+            *target.cast() = size;
+            let target = target.add(mem::size_of::<i32>());
+
+            self.output.as_ptr().copy_to(target.cast(), size as usize);
         }
     }
 

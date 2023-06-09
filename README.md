@@ -2,11 +2,13 @@
 
 Rewrite of [oscilloscope-visualizer](https://github.com/alexd2580/oscilloscope-visualizer) (C/OpenGL) in Rust/Vulkan.
 
+![current snapshot](./snapshot.png)
+
 # Running
 
 ```bash
 # It's rust....
-cargo run
+cargo run -- -s shaders/high_low_dft.comp -d 8192
 ```
 
 # Future development

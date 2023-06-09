@@ -13,11 +13,13 @@ layout(binding = 1) buffer Signal {
     int position;
     float data[];
 } signal;
+
 layout(binding = 2) buffer LowPass {
     int size;
     int position;
     float data[];
 } low_pass;
+
 layout(binding = 3) buffer HighPass {
     int size;
     int position;
@@ -28,25 +30,144 @@ layout(binding = 4) buffer Dft {
     int size;
     vec2 data[];
 } signal_dft;
+
 layout(binding = 5) buffer DftLowPass {
     int size;
     vec2 data[];
 } low_pass_dft;
+
 layout(binding = 6) buffer DftHighPass {
     int size;
     vec2 data[];
 } high_pass_dft;
+
+    //
+    // float y_raw = length(dft_at(index));
+    // float y_smooth = length(smooth_dft_at(index));
+    //
+    // if (p.y < y_raw / 256) {
+    //     return vec4(1, 0, 0, 0);
+    // } else if (p.y < y_smooth / 256) {
+    //     return vec4(1, 0.5, 0, 0);
+    // }
+    // return vec4(0);
+// }-
+
+const float eps = 0.002;
+
+int pcm_index(float x) {
+    int index_from_end = int((1 - x) * 0.3 * float(signal.size));
+    int pcm_index = (signal.size + (signal.position - index_from_end)) % signal.size;
+    return pcm_index - pcm_index % 200;
+}
+
+vec4 pcm_raw(vec2 pos) {
+    int index = pcm_index(pos.x);
+    float max_val = 0;
+    for (int i = 0; i < 200; i++) {
+        max_val = max(abs(signal.data[index + i]), max_val);
+    }
+    float y = pos.y * 2 - 1;
+    float color = max_val > abs(y) - eps ? 1.0 : 0.0;
+    return vec4(color, 0, 0, 0);
+}
+
+vec4 pcm_low(vec2 pos) {
+    int index = pcm_index(pos.x);
+    float max_val = 0;
+    for (int i = 0; i < 200; i++) {
+        max_val = max(abs(low_pass.data[index + i]), max_val);
+    }
+    float y = pos.y * 2 - 1;
+    float color = max_val > abs(y) - eps ? 1.0 : 0.0;
+    return vec4(0, color, 0, 0);
+}
+
+vec4 pcm_high(vec2 pos) {
+    int index = pcm_index(pos.x);
+    float max_val = 0;
+    for (int i = 0; i < 200; i++) {
+        max_val = max(abs(high_pass.data[index + i]), max_val);
+    }
+    float y = pos.y * 2 - 1;
+    float color = max_val > abs(y) - eps ? 1.0 : 0.0;
+    return vec4(0, 0, color, 0);
+}
+
+vec4 pcm_image(vec2 pos) {
+    if (pos.y < 0.33333333) {
+        return pcm_raw(vec2(pos.x, pos.y * 3));
+    } else if (pos.y < 0.66666666) {
+        float posy = (pos.y - 0.3333333) * 3;
+        vec4 raw = pcm_raw(vec2(pos.x, posy));
+        return raw + pcm_low(vec2(pos.x, posy));
+    } else {
+        float posy = (pos.y - 0.666666) * 3;
+        vec4 raw = pcm_raw(vec2(pos.x, posy));
+        return raw + pcm_high(vec2(pos.x, posy));
+    }
+}
+
+int dft_index(float x) {
+    float max_x = log2(float(signal_dft.size - 8));
+    float float_x = 8 + pow(2, max_x * x);
+    int index = int(round(float_x));
+    return index;
+}
+
+vec4 dft_raw(vec2 pos) {
+    int index = dft_index(pos.x);
+    float y = pos.y * 2 - 1;
+    float color = (2 + index) / 15 * length(signal_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
+    return vec4(color, 0, 0, 0);
+}
+
+vec4 dft_low(vec2 pos) {
+    int index = dft_index(pos.x);
+    float y = pos.y * 2 - 1;
+    float color = (2 + index) / 15 * length(low_pass_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
+    return vec4(0, color, 0, 0);
+}
+
+vec4 dft_high(vec2 pos) {
+    int index = dft_index(pos.x);
+    float y = pos.y * 2 - 1;
+    float color = (2 + index) / 15 * length(high_pass_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
+    return vec4(0, 0, color, 0);
+}
+
+vec4 dft_image(vec2 pos) {
+    if (pos.y < 0.33333333) {
+        return dft_raw(vec2(pos.x, pos.y * 3));
+    } else if (pos.y < 0.66666666) {
+        float posy = (pos.y - 0.3333333) * 3;
+        vec4 raw = dft_raw(vec2(pos.x, posy));
+        return raw + dft_low(vec2(pos.x, posy));
+    } else {
+        float posy = (pos.y - 0.666666) * 3;
+        vec4 raw = dft_raw(vec2(pos.x, posy));
+        return raw + dft_high(vec2(pos.x, posy));
+    }
+}
+
+vec4 main_image(vec2 pos) {
+    if (pos.x < 0.5) {
+        return pcm_image(vec2(pos.x * 2, pos.y));
+    } else {
+        return dft_image(vec2((pos.x - 0.5) * 2, pos.y));
+    }
+}
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     vec2 pixel_coords = vec2(ipixel_coords) / iimage_size;
 
-    int dft_index = 1 + int(pixel_coords.x * signal_dft.size);
-    float dft_at_index = length(signal_dft.data[dft_index]);
-    float dft_height = dft_at_index;
-    bool pixel_below_dft = pixel_coords.y < dft_height;
-
     ivec2 istore_coords = ivec2(ipixel_coords.x, iimage_size.y - 1 - ipixel_coords.y);
-    imageStore(present, istore_coords, vec4(pixel_below_dft ? 1 : 0, 0, 0, 1));
+    imageStore(present, istore_coords, main_image(pixel_coords));
+
+    // int dft_index = 1 + int(pixel_coords.x * signal_dft.size);
+    // float dft_at_index = length(signal_dft.data[dft_index]);
+    // float dft_height = dft_at_index;
+    // bool pixel_below_dft = pixel_coords.y < dft_height;
 }

@@ -55,10 +55,15 @@ impl DescriptorSetLayoutBindings {
         let variable_bindings = shader_module
             .variable_declarations
             .iter()
+            .filter(|declaration| declaration.binding.is_some())
             .map(|declaration| {
                 (
                     declaration.checked_set(),
-                    Self::make_binding(declaration.binding, vk::DescriptorType::STORAGE_IMAGE),
+                    // Unwrap is safe, we have filtered before.
+                    Self::make_binding(
+                        declaration.binding.unwrap(),
+                        vk::DescriptorType::STORAGE_IMAGE,
+                    ),
                 )
             });
 
