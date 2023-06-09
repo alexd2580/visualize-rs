@@ -46,15 +46,21 @@ pub struct Vulkan {
     image_acquired_semaphore: Rc<Semaphore>,
     compute_complete_semaphore: Rc<Semaphore>,
     reuse_command_buffer_fence: Rc<Fence>,
+
+    pipelines: Vec<Rc<Pipeline>>,
+
+    pipeline_layout: Rc<PipelineLayout<PushConstants>>,
+
     descriptor_sets_sets: Rc<Vec<DescriptorSets>>,
     _descriptor_pool: Rc<DescriptorPool>,
-    pipeline: Rc<Pipeline>,
-    pipeline_layout: Rc<PipelineLayout<PushConstants>>,
     _descriptor_set_layouts: Rc<Vec<DescriptorSetLayout>>,
     _descriptor_set_layout_binding_sets: Rc<Vec<DescriptorSetLayoutBindings>>,
-    compute_shader_module: Rc<ShaderModule>,
-    compute_shader_module_mtime: FileTime,
+
+    compute_shader_modules: Vec<Rc<ShaderModule>>,
+    compute_shader_module_mtimes: Vec<FileTime>,
+
     sampler: Rc<Sampler>,
+    present_name: String,
     image_views: Rc<ImageViews>,
     images: Rc<Images>,
     image_subresource_range: ImageSubresourceRange,
@@ -65,10 +71,12 @@ pub struct Vulkan {
     command_buffer: Rc<CommandBuffer>,
     _command_pool: Rc<CommandPool>,
     compute_queue: Rc<ComputeQueue>,
+
     device: Rc<Device>,
     physical_device: Rc<PhysicalDevice>,
     surface: Rc<Surface>,
     surface_loader: Rc<SurfaceLoader>,
+
     _instance: Rc<Instance>,
     _entry: Rc<Entry>,
 }
@@ -123,10 +131,12 @@ impl Vulkan {
     unsafe fn initialize_descriptor_sets(&self) {
         debug!("Initializing present descriptor sets");
 
+        let name = &self.present_name;
         let present_declaration = self
-            .compute_shader_module
-            .variable_declaration(&self.compute_shader_module.present_name)
-            .expect("Present image not found in shader module");
+            .compute_shader_modules
+            .iter()
+            .find_map(|module| module.variable_declaration(name))
+            .expect("Present image not found in shader modules.");
 
         let present_binding = present_declaration
             .binding
@@ -157,7 +167,7 @@ impl Vulkan {
         self.write_descriptor_sets(&image_descriptors, &[]);
     }
 
-    pub fn new(window: &Window, compute_shader_path: &Path) -> Result<Self, Error> {
+    pub fn new(window: &Window, compute_shader_paths: &[&Path]) -> Result<Self, Error> {
         debug!("Initializing video system");
         unsafe {
             let entry = Entry::new()?;
@@ -179,16 +189,20 @@ impl Vulkan {
             let images = Images::new(&swapchain_loader, &swapchain)?;
             let image_views =
                 ImageViews::new(&device, &images, &surface_info, &image_subresource_range)?;
+            let present_name = "present".to_owned();
             let sampler = Sampler::new(&device)?;
 
-            let compute_shader_module_mtime = mtime(compute_shader_path)?;
-            let compute_shader_module = ShaderModule::new(&device, compute_shader_path)?;
+            let mut compute_shader_module_mtimes = Vec::new();
+            let mut compute_shader_modules = Vec::new();
+            for compute_shader_path in compute_shader_paths {
+                compute_shader_module_mtimes.push(mtime(compute_shader_path)?);
+                compute_shader_modules.push(ShaderModule::new(&device, compute_shader_path)?);
+            }
+
             let descriptor_set_layout_binding_sets =
-                DescriptorSetLayoutBindings::new(&compute_shader_module)?;
+                DescriptorSetLayoutBindings::new(&compute_shader_modules)?;
             let descriptor_set_layouts =
                 DescriptorSetLayout::new(&device, &descriptor_set_layout_binding_sets)?;
-            let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layouts)?;
-            let pipeline = Pipeline::new(&device, &compute_shader_module, &pipeline_layout)?;
             let descriptor_pool = DescriptorPool::new(
                 &device,
                 &descriptor_set_layout_binding_sets,
@@ -200,6 +214,17 @@ impl Vulkan {
                 &descriptor_pool,
                 surface_info.desired_image_count,
             )?;
+
+            let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layouts)?;
+
+            let mut pipelines = Vec::new();
+            for compute_shader_module in &compute_shader_modules {
+                pipelines.push(Pipeline::new(
+                    &device,
+                    &compute_shader_module,
+                    &pipeline_layout,
+                )?);
+            }
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
             let image_acquired_semaphore = Semaphore::new(&device)?;
@@ -222,15 +247,16 @@ impl Vulkan {
                 image_subresource_range,
                 images,
                 image_views,
+                present_name,
                 sampler,
-                compute_shader_module_mtime,
-                compute_shader_module,
+                compute_shader_module_mtimes,
+                compute_shader_modules,
                 _descriptor_set_layout_binding_sets: descriptor_set_layout_binding_sets,
                 _descriptor_set_layouts: descriptor_set_layouts,
-                pipeline_layout,
-                pipeline,
                 _descriptor_pool: descriptor_pool,
                 descriptor_sets_sets,
+                pipeline_layout,
+                pipelines,
                 reuse_command_buffer_fence,
                 image_acquired_semaphore,
                 compute_complete_semaphore,
@@ -248,22 +274,27 @@ impl Vulkan {
     }
 
     unsafe fn recompile_shader_if_modified(&mut self) -> Result<(), Error> {
-        if mtime(&self.compute_shader_module.source_path)? > self.compute_shader_module_mtime {
-            self.compute_shader_module_mtime = mtime(&self.compute_shader_module.source_path)?;
-            info!("Shader source modified, recompiling...");
-            self.wait_idle();
+        for index in 0..self.compute_shader_modules.len() {
+            let module = &self.compute_shader_modules[index];
+            let module_mtime = self.compute_shader_module_mtimes[index];
 
-            match self.compute_shader_module.rebuild() {
-                Ok(compute_shader_module) => {
-                    let pipeline =
-                        Pipeline::new(&self.device, &compute_shader_module, &self.pipeline_layout)?;
+            if mtime(&module.source_path)? > module_mtime {
+                self.compute_shader_module_mtimes[index] = mtime(&module.source_path)?;
+                info!("Shader source modified, recompiling...");
+                self.wait_idle();
 
-                    self.compute_shader_module = compute_shader_module;
-                    self.pipeline = pipeline;
+                match module.rebuild() {
+                    Ok(new_module) => {
+                        let new_pipeline =
+                            Pipeline::new(&self.device, &new_module, &self.pipeline_layout)?;
 
-                    self.initialize_descriptor_sets();
+                        self.compute_shader_modules[index] = new_module;
+                        self.pipelines[index] = new_pipeline;
+
+                        self.initialize_descriptor_sets();
+                    }
+                    Err(err) => error!("{}", err),
                 }
-                Err(err) => error!("{}", err),
             }
         }
         Ok(())
@@ -316,19 +347,24 @@ impl Vulkan {
         let num_buffers = self.surface_info.desired_image_count as usize;
         // TODO num buffers? What does this mean?
         unsafe {
-            let declaration = self.compute_shader_module.block_declaration(name)?;
+            let declaration = self
+                .compute_shader_modules
+                .iter()
+                .find_map(|module| module.block_declaration(name))
+                .ok_or_else(|| {
+                    let msg = format!("No block '{name}' within shader module.");
+                    Error::Local(msg)
+                })?;
             let storage = declaration.storage;
-
             let binding = declaration.binding.ok_or_else(|| {
                 let msg = format!("Block '{name}' does not specify a binding.");
                 Error::Local(msg)
             })?;
-
             let set = declaration.checked_set();
-            let descriptor_sets = &self.descriptor_sets_sets[set];
 
             let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
 
+            let descriptor_sets = &self.descriptor_sets_sets[set];
             let buffer_descriptors: Vec<(
                 vk::DescriptorType,
                 [vk::DescriptorBufferInfo; 1],
@@ -399,11 +435,11 @@ impl Vulkan {
         )
     }
 
-    unsafe fn bind_pipeline(&self) {
+    unsafe fn bind_pipeline(&self, pipeline: &Pipeline) {
         self.device.cmd_bind_pipeline(
             **self.command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            **self.pipeline,
+            **pipeline,
         );
     }
 
@@ -440,8 +476,6 @@ impl Vulkan {
         self.reuse_command_buffer_fence.reset()?;
 
         self.begin_command_buffer()?;
-        self.bind_pipeline();
-
         for image in self.images.iter() {
             self.image_memory_barrier_layout_transition(
                 *image,
@@ -449,8 +483,8 @@ impl Vulkan {
                 vk::ImageLayout::PRESENT_SRC_KHR,
             );
         }
-
         self.end_command_buffer()?;
+
         self.queue_submit_task()
     }
 
@@ -498,8 +532,8 @@ impl Vulkan {
         );
     }
 
-    unsafe fn dispatch(&self) {
-        let local_size = self.compute_shader_module.local_size;
+    unsafe fn dispatch(&self, compute_shader_module: &ShaderModule) {
+        let local_size = compute_shader_module.local_size;
         let window_size = self.window_size;
         let invocation_x = window_size.0 / local_size.0;
         let invocation_y = window_size.1 / local_size.1;
@@ -537,7 +571,6 @@ impl Vulkan {
         self.reuse_command_buffer_fence.reset()?;
 
         self.begin_command_buffer()?;
-        self.bind_pipeline();
 
         // Transition image to "GENERAL" layout.
         self.image_memory_barrier_layout_transition(
@@ -551,7 +584,15 @@ impl Vulkan {
         };
         self.push_constants(&push_constants);
         self.bind_descriptor_set(&[present_index, self.binding_index]);
-        self.dispatch();
+
+        let iter = self
+            .pipelines
+            .iter()
+            .zip(self.compute_shader_modules.iter());
+        for (pipeline, shader_module) in iter {
+            self.bind_pipeline(pipeline);
+            self.dispatch(shader_module);
+        }
 
         // Transition image to the "PRESENT_SRC" layout for presentation.
         self.image_memory_barrier_layout_transition(

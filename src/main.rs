@@ -10,9 +10,9 @@ mod dft;
 mod error;
 mod ring_buffer;
 mod thread_shared;
+mod utils;
 mod vulkan;
 mod window;
-mod utils;
 
 struct App {
     audio: audio::Audio,
@@ -132,7 +132,7 @@ fn run_main() -> Result<(), Error> {
     let args = Args::parse();
 
     let mut window = window::Window::new(1280, 1024)?;
-    let vulkan = vulkan::Vulkan::new(&window, &args.shader_path)?;
+    let vulkan = vulkan::Vulkan::new(&window, &[&args.shader_path])?;
 
     let sample_rate = 44100;
     let audio_buffer_size = sample_rate * args.audio_buffer_sec;

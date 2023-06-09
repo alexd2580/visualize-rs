@@ -575,7 +575,6 @@ pub struct ShaderModule {
     pub block_declarations: Vec<BlockDeclaration>,
 
     pub main_name: String,
-    pub present_name: String,
 }
 
 impl Deref for ShaderModule {
@@ -601,7 +600,6 @@ impl ShaderModule {
         let shader_module = device.create_shader_module(&shader_info, None)?;
 
         let main_name = "main".to_owned();
-        let present_name = "present".to_owned();
 
         Ok(Rc::new(ShaderModule {
             device,
@@ -611,7 +609,6 @@ impl ShaderModule {
             variable_declarations,
             block_declarations,
             main_name,
-            present_name,
         }))
     }
 
@@ -619,29 +616,19 @@ impl ShaderModule {
         ShaderModule::new(&self.device, &self.source_path)
     }
 
-    pub fn variable_declaration(&self, name: &str) -> Result<&VariableDeclaration, Error> {
+    pub fn variable_declaration(&self, name: &str) -> Option<&VariableDeclaration> {
         self.variable_declarations
             .iter()
             .find(|declaration| declaration.name == name)
-            .ok_or_else(|| {
-                let msg = format!("No variable '{name}' within shader module.");
-                Error::Local(msg)
-            })
     }
 
-    pub fn block_declaration(&self, name: &str) -> Result<&BlockDeclaration, Error> {
-        self.block_declarations
-            .iter()
-            .find(|declaration| {
-                declaration
-                    .identifier
-                    .as_ref()
-                    .is_some_and(|val| val == name)
-            })
-            .ok_or_else(|| {
-                let msg = format!("No block '{name}' within shader module.");
-                Error::Local(msg)
-            })
+    pub fn block_declaration(&self, name: &str) -> Option<&BlockDeclaration> {
+        self.block_declarations.iter().find(|declaration| {
+            declaration
+                .identifier
+                .as_ref()
+                .is_some_and(|val| val == name)
+        })
     }
 }
 

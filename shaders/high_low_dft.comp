@@ -65,7 +65,7 @@ vec4 pcm_raw(vec2 pos) {
     int index = pcm_index(pos.x);
     float max_val = 0;
     for (int i = 0; i < 200; i++) {
-        max_val = max(abs(signal.data[index + i]), max_val);
+        max_val = max(abs(signal.data[(index + i) % signal.size]), max_val);
     }
     float y = pos.y * 2 - 1;
     float color = max_val > abs(y) - eps ? 1.0 : 0.0;
@@ -76,7 +76,7 @@ vec4 pcm_low(vec2 pos) {
     int index = pcm_index(pos.x);
     float max_val = 0;
     for (int i = 0; i < 200; i++) {
-        max_val = max(abs(low_pass.data[index + i]), max_val);
+        max_val = max(abs(low_pass.data[(index + i) % signal.size]), max_val);
     }
     float y = pos.y * 2 - 1;
     float color = max_val > abs(y) - eps ? 1.0 : 0.0;
@@ -87,7 +87,7 @@ vec4 pcm_high(vec2 pos) {
     int index = pcm_index(pos.x);
     float max_val = 0;
     for (int i = 0; i < 200; i++) {
-        max_val = max(abs(signal.data[index + i] - low_pass.data[index + i]), max_val);
+        max_val = max(abs(signal.data[(index + i) % signal.size] - low_pass.data[(index + i) % signal.size]), max_val);
     }
     float y = pos.y * 2 - 1;
     float color = max_val > abs(y) - eps ? 1.0 : 0.0;
@@ -109,31 +109,34 @@ vec4 pcm_image(vec2 pos) {
 }
 
 int dft_index(float x) {
-    float max_x = log2(float(signal_dft.size - 8));
-    float float_x = 8 + pow(2, max_x * x);
-    int index = int(round(float_x));
-    return index;
+    return int((pow(3000, x) - 1) / (3000 - 1) * signal_dft.size);
+    // int useless = 2;
+    // float float_x = float(signal_dft.size - useless) * pow(x, 5);
+    // return useless + int(round(float_x));
+}
+
+float dft_color(int index, float value, float y) {
+    y = y * 2 - 1;
+    float scale = (14 + 0.8 * index) / 15;
+    return scale * value >= abs(y) - eps ? 1.0 : 0.0;
 }
 
 vec4 dft_raw(vec2 pos) {
     int index = dft_index(pos.x);
-    float y = pos.y * 2 - 1;
-    float color = (2 + index) / 15 * length(signal_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
-    return vec4(color, 0, 0, 0);
+    float dft_value = length(signal_dft.data[index]);
+    return vec4(dft_color(index, dft_value, pos.y), 0, 0, 0);
 }
 
 vec4 dft_low(vec2 pos) {
     int index = dft_index(pos.x);
-    float y = pos.y * 2 - 1;
-    float color = (2 + index) / 15 * length(low_pass_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
-    return vec4(0, color, 0, 0);
+    float dft_value = length(low_pass_dft.data[index]);
+    return vec4(0, dft_color(index, dft_value, pos.y), 0, 0);
 }
 
 vec4 dft_high(vec2 pos) {
     int index = dft_index(pos.x);
-    float y = pos.y * 2 - 1;
-    float color = (2 + index) / 15 * (length(signal_dft.data[index]) - length(low_pass_dft.data[index])) >= abs(y) - eps ? 1.0 : 0.0;
-    return vec4(0, 0, color, 0);
+    float dft_value = length(signal_dft.data[index]) - length(low_pass_dft.data[index]);
+    return vec4(0, 0, dft_color(index, dft_value, pos.y), 0);
 }
 
 vec4 dft_image(vec2 pos) {

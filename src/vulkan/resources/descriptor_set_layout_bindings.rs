@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc};
+use std::{collections::HashMap, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -19,18 +19,29 @@ impl Deref for DescriptorSetLayoutBindings {
     }
 }
 
-fn collect_partitions<Value: std::fmt::Debug>(
-    iter: impl Iterator<Item = (usize, Value)>,
-) -> Vec<Vec<Value>> {
-    let mut result = Vec::new();
-    for (index, value) in iter {
-        if index >= result.len() {
-            result.resize_with(index + 1, Vec::new);
+fn collect_set_bindings(
+    iter: impl Iterator<Item = (u32, usize, vk::DescriptorType)>,
+) -> Result<Vec<HashMap<u32, vk::DescriptorType>>, Error> {
+    let mut sets = Vec::new();
+    for (binding, set, desc_type) in iter {
+        if set >= sets.len() {
+            sets.resize_with(set + 1, HashMap::new);
         }
 
-        result[index].push(value);
+        let set = &mut sets[set];
+        match set.get(&binding) {
+            None => {
+                set.insert(binding, desc_type);
+            }
+            Some(prev_desc_type) => {
+                if desc_type != *prev_desc_type {
+                    let msg = format!("Shaders use same set/binding with different descriptor types: {desc_type:?} and {:?}", *prev_desc_type);
+                    return Err(Error::Local(msg));
+                }
+            }
+        };
     }
-    result
+    Ok(sets)
 }
 
 impl DescriptorSetLayoutBindings {
@@ -47,42 +58,48 @@ impl DescriptorSetLayoutBindings {
         }
     }
 
-    pub fn new(shader_module: &ShaderModule) -> Result<Rc<Vec<Self>>, Error> {
+    pub fn new(
+        shader_modules: &[impl Deref<Target = ShaderModule>],
+    ) -> Result<Rc<Vec<Self>>, Error> {
         debug!("Creating descriptor set layout bindings");
 
         // TODO immutable samplers, what are immutable samplers???
         // Are these always storage images?
-        let variable_bindings = shader_module
-            .variable_declarations
-            .iter()
-            .filter(|declaration| declaration.binding.is_some())
-            .map(|declaration| {
-                (
-                    declaration.checked_set(),
-                    // Unwrap is safe, we have filtered before.
-                    Self::make_binding(
+        let bindings = shader_modules.iter().flat_map(|shader_module| {
+            let vars = shader_module
+                .variable_declarations
+                .iter()
+                .filter(|declaration| declaration.binding.is_some())
+                .map(|declaration| {
+                    (
                         declaration.binding.unwrap(),
+                        declaration.checked_set(),
                         vk::DescriptorType::STORAGE_IMAGE,
-                    ),
-                )
-            });
+                    )
+                });
 
-        // Uniform and storage buffers.
-        // TODO Warn about buffers without explicit binding.
-        let block_bindings = shader_module
-            .block_declarations
-            .iter()
-            .filter(|declaration| declaration.binding.is_some())
-            .map(|declaration| {
-                (
-                    declaration.checked_set(),
-                    // Unwrap is safe, we have filtered before.
-                    Self::make_binding(declaration.binding.unwrap(), declaration.storage),
-                )
-            });
+            let blocks = shader_module
+                .block_declarations
+                .iter()
+                .filter(|declaration| declaration.binding.is_some())
+                .map(|declaration| {
+                    (
+                        declaration.binding.unwrap(),
+                        declaration.checked_set(),
+                        declaration.storage,
+                    )
+                });
 
-        let partitions = collect_partitions(variable_bindings.chain(block_bindings))
+            vars.chain(blocks)
+        });
+
+        let partitions = collect_set_bindings(bindings)?
             .into_iter()
+            .map(|set| {
+                set.into_iter()
+                    .map(|(binding, desc_type)| Self::make_binding(binding, desc_type))
+                    .collect()
+            })
             .map(DescriptorSetLayoutBindings)
             .collect();
 
