@@ -87,7 +87,7 @@ vec4 pcm_high(vec2 pos) {
     int index = pcm_index(pos.x);
     float max_val = 0;
     for (int i = 0; i < 200; i++) {
-        max_val = max(abs(high_pass.data[index + i]), max_val);
+        max_val = max(abs(signal.data[index + i] - low_pass.data[index + i]), max_val);
     }
     float y = pos.y * 2 - 1;
     float color = max_val > abs(y) - eps ? 1.0 : 0.0;
@@ -132,7 +132,7 @@ vec4 dft_low(vec2 pos) {
 vec4 dft_high(vec2 pos) {
     int index = dft_index(pos.x);
     float y = pos.y * 2 - 1;
-    float color = (2 + index) / 15 * length(high_pass_dft.data[index]) >= abs(y) - eps ? 1.0 : 0.0;
+    float color = (2 + index) / 15 * (length(signal_dft.data[index]) - length(low_pass_dft.data[index])) >= abs(y) - eps ? 1.0 : 0.0;
     return vec4(0, 0, color, 0);
 }
 
