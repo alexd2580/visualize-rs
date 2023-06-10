@@ -14,6 +14,7 @@ mod utils;
 mod vulkan;
 mod window;
 
+/// Note the reverse drop order.
 struct App {
     audio: audio::Audio,
     signal_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
@@ -30,6 +31,7 @@ struct App {
     high_pass_dft: dft::Dft,
     high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
+    _intermediate: Rc<vulkan::multi_image::MultiImage>,
     vulkan: vulkan::Vulkan,
 }
 
@@ -116,8 +118,8 @@ impl Drop for App {
 #[derive(Parser)]
 struct Args {
     /// The shader module path
-    #[arg(short, long, default_value = "shaders/debug.comp")]
-    shader_path: std::path::PathBuf,
+    #[arg(short, long, num_args = 0.., default_value = "shaders/debug.comp")]
+    shader_paths: Vec<std::path::PathBuf>,
 
     /// The DFT size
     #[arg(short, long, default_value = "2048")]
@@ -132,7 +134,9 @@ fn run_main() -> Result<(), Error> {
     let args = Args::parse();
 
     let mut window = window::Window::new(1280, 1024)?;
-    let vulkan = vulkan::Vulkan::new(&window, &[&args.shader_path])?;
+    let vulkan = vulkan::Vulkan::new(&window, &args.shader_paths)?;
+
+    let intermediate = vulkan.new_multi_image("intermediate")?;
 
     let sample_rate = 44100;
     let audio_buffer_size = sample_rate * args.audio_buffer_sec;
@@ -179,6 +183,7 @@ fn run_main() -> Result<(), Error> {
             high_pass_gpu,
             high_pass_dft,
             high_pass_dft_gpu,
+            _intermediate: intermediate,
             vulkan,
         };
         window.run_main_loop(&mut app);

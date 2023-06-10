@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc};
+use std::{mem, ops::Deref, path::Path, rc::Rc};
 
 use ash::vk;
 use filetime::FileTime;
@@ -12,21 +12,20 @@ use crate::{
 };
 
 pub mod multi_buffer;
+pub mod multi_image;
 pub mod resources;
 
-use self::{
-    multi_buffer::MultiBuffer,
-    resources::{
-        command_buffer::CommandBuffer, command_pool::CommandPool, compute_queue::ComputeQueue,
-        descriptor_pool::DescriptorPool, descriptor_set_layout::DescriptorSetLayout,
-        descriptor_set_layout_bindings::DescriptorSetLayoutBindings,
-        descriptor_sets::DescriptorSets, device::Device, entry::Entry, fence::Fence,
-        image_subresource_range::ImageSubresourceRange, image_views::ImageViews, images::Images,
-        instance::Instance, physical_device::PhysicalDevice, pipeline::Pipeline,
-        pipeline_layout::PipelineLayout, sampler::Sampler, semaphore::Semaphore,
-        shader_module::ShaderModule, surface::Surface, surface_info::SurfaceInfo,
-        surface_loader::SurfaceLoader, swapchain::Swapchain, swapchain_loader::SwapchainLoader,
-    },
+use self::resources::{
+    buffer::Buffer, command_buffer::CommandBuffer, command_pool::CommandPool,
+    compute_queue::ComputeQueue, descriptor_pool::DescriptorPool,
+    descriptor_set_layout::DescriptorSetLayout,
+    descriptor_set_layout_bindings::DescriptorSetLayoutBindings, descriptor_sets::DescriptorSets,
+    device::Device, entry::Entry, fence::Fence, image::Image,
+    image_subresource_range::ImageSubresourceRange, image_views::ImageView, instance::Instance,
+    physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
+    sampler::Sampler, semaphore::Semaphore, shader_module::ShaderModule, surface::Surface,
+    surface_info::SurfaceInfo, surface_loader::SurfaceLoader, swapchain::Swapchain,
+    swapchain_loader::SwapchainLoader,
 };
 
 // This struct is not supposed to be read on the CPU, it only maps the structure of the push
@@ -40,7 +39,6 @@ struct PushConstants {
 pub struct Vulkan {
     pub num_frames: u32,
     pub binding_index: usize,
-    stale_image_layout: bool,
     stale_swapchain: bool,
 
     image_acquired_semaphore: Rc<Semaphore>,
@@ -59,13 +57,18 @@ pub struct Vulkan {
     compute_shader_modules: Vec<Rc<ShaderModule>>,
     compute_shader_module_mtimes: Vec<FileTime>,
 
-    sampler: Rc<Sampler>,
     present_name: String,
-    image_views: Rc<ImageViews>,
-    images: Rc<Images>,
-    image_subresource_range: ImageSubresourceRange,
+    swapchain_image_views: Vec<Rc<ImageView>>,
+    swapchain_images: Vec<Rc<Image>>,
     swapchain: Rc<Swapchain>,
     swapchain_loader: Rc<SwapchainLoader>,
+
+    image_binding_updates: Vec<(String, Vec<(Rc<ImageView>, Rc<Sampler>)>)>,
+    buffer_binding_updates: Vec<(String, Vec<Rc<Buffer>>)>,
+    stale_images: Vec<(Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
+
+    sampler: Rc<Sampler>,
+    image_subresource_range: ImageSubresourceRange,
     surface_info: SurfaceInfo,
     window_size: (u32, u32),
     command_buffer: Rc<CommandBuffer>,
@@ -82,52 +85,6 @@ pub struct Vulkan {
 }
 
 impl Vulkan {
-    unsafe fn write_descriptor_sets(
-        &self,
-        image_descriptors: &[(
-            vk::DescriptorType,
-            [vk::DescriptorImageInfo; 1],
-            vk::DescriptorSet,
-            u32,
-        )],
-        buffer_descriptors: &[(
-            vk::DescriptorType,
-            [vk::DescriptorBufferInfo; 1],
-            vk::DescriptorSet,
-            u32,
-        )],
-    ) {
-        let image_descriptors = image_descriptors.iter().map(
-            |&(descriptor_type, ref image_info, descriptor_set, descriptor_binding)| {
-                vk::WriteDescriptorSet::builder()
-                    .descriptor_type(descriptor_type)
-                    .image_info(image_info)
-                    .dst_set(descriptor_set)
-                    .dst_binding(descriptor_binding)
-                    .dst_array_element(0)
-                    .build()
-            },
-        );
-
-        let buffer_descriptors = buffer_descriptors.iter().map(
-            |&(descriptor_type, ref buffer_info, descriptor_set, descriptor_binding)| {
-                vk::WriteDescriptorSet::builder()
-                    .descriptor_type(descriptor_type)
-                    .buffer_info(buffer_info)
-                    .dst_set(descriptor_set)
-                    .dst_binding(descriptor_binding)
-                    .dst_array_element(0)
-                    .build()
-            },
-        );
-
-        let write_descriptor_sets: Vec<vk::WriteDescriptorSet> =
-            image_descriptors.chain(buffer_descriptors).collect();
-
-        self.device
-            .update_descriptor_sets(&write_descriptor_sets, &[]);
-    }
-
     unsafe fn initialize_descriptor_sets(&self) {
         debug!("Initializing present descriptor sets");
 
@@ -140,17 +97,17 @@ impl Vulkan {
 
         let present_binding = present_declaration
             .binding
-            .expect("Present image has bo binding");
+            .expect("Present image has no binding");
         let present_set = present_declaration.checked_set();
         let present_descriptor_sets = &self.descriptor_sets_sets[present_set];
 
         let image_descriptors = self
-            .image_views
+            .swapchain_image_views
             .iter()
             .zip(present_descriptor_sets.iter())
             .map(|(image_view, descriptor_set)| {
                 let image_info = vk::DescriptorImageInfo::builder()
-                    .image_view(*image_view)
+                    .image_view(***image_view)
                     .sampler(**self.sampler)
                     .image_layout(vk::ImageLayout::GENERAL)
                     .build();
@@ -167,7 +124,10 @@ impl Vulkan {
         self.write_descriptor_sets(&image_descriptors, &[]);
     }
 
-    pub fn new(window: &Window, compute_shader_paths: &[&Path]) -> Result<Self, Error> {
+    pub fn new(
+        window: &Window,
+        compute_shader_paths: &[impl Deref<Target = Path>],
+    ) -> Result<Self, Error> {
         debug!("Initializing video system");
         unsafe {
             let entry = Entry::new()?;
@@ -183,14 +143,28 @@ impl Vulkan {
             let window_size = (window.width, window.height);
             let surface_info =
                 SurfaceInfo::new(window_size, &physical_device, &surface_loader, &surface)?;
+            let image_subresource_range = ImageSubresourceRange::new()?;
+            let sampler = Sampler::new(&device)?;
+
+            let stale_images = Vec::new();
+
             let swapchain_loader = SwapchainLoader::new(&instance, &device)?;
             let swapchain = Swapchain::new(&surface, &surface_info, &swapchain_loader, None)?;
-            let image_subresource_range = ImageSubresourceRange::new()?;
-            let images = Images::new(&swapchain_loader, &swapchain)?;
-            let image_views =
-                ImageViews::new(&device, &images, &surface_info, &image_subresource_range)?;
+            let swapchain_images = Image::many_from_swapchain(&swapchain_loader, &swapchain)?;
+            for image in swapchain_images {
+                stale_images.push((
+                    image.clone(),
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::PRESENT_SRC_KHR,
+                ));
+            }
+            let swapchain_image_views = ImageView::many(
+                &device,
+                swapchain_images.iter(),
+                &surface_info,
+                &image_subresource_range,
+            )?;
             let present_name = "present".to_owned();
-            let sampler = Sampler::new(&device)?;
 
             let mut compute_shader_module_mtimes = Vec::new();
             let mut compute_shader_modules = Vec::new();
@@ -217,14 +191,8 @@ impl Vulkan {
 
             let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layouts)?;
 
-            let mut pipelines = Vec::new();
-            for compute_shader_module in &compute_shader_modules {
-                pipelines.push(Pipeline::new(
-                    &device,
-                    &compute_shader_module,
-                    &pipeline_layout,
-                )?);
-            }
+            let pipelines =
+                Pipeline::many(&device, compute_shader_modules.iter(), &pipeline_layout)?;
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
             let image_acquired_semaphore = Semaphore::new(&device)?;
@@ -242,13 +210,14 @@ impl Vulkan {
                 command_buffer,
                 window_size,
                 surface_info,
+                image_subresource_range,
+                sampler,
+                stale_images,
                 swapchain_loader,
                 swapchain,
-                image_subresource_range,
-                images,
-                image_views,
+                swapchain_images,
+                swapchain_image_views,
                 present_name,
-                sampler,
                 compute_shader_module_mtimes,
                 compute_shader_modules,
                 _descriptor_set_layout_binding_sets: descriptor_set_layout_binding_sets,
@@ -262,8 +231,6 @@ impl Vulkan {
                 compute_complete_semaphore,
                 binding_index: 0,
                 num_frames: 0,
-                // Images are in undefined layout when created.
-                stale_image_layout: true,
                 stale_swapchain: false,
             };
 
@@ -326,10 +293,18 @@ impl Vulkan {
             &self.swapchain_loader,
             Some(**self.swapchain),
         )?;
-        self.images = Images::new(&self.swapchain_loader, &self.swapchain)?;
-        self.image_views = ImageViews::new(
+        self.swapchain_images =
+            Image::many_from_swapchain(&self.swapchain_loader, &self.swapchain)?;
+        for image in self.swapchain_images {
+            self.stale_images.push((
+                image.clone(),
+                vk::ImageLayout::UNDEFINED,
+                vk::ImageLayout::PRESENT_SRC_KHR,
+            ));
+        }
+        self.swapchain_image_views = ImageView::many(
             &self.device,
-            &self.images,
+            self.swapchain_images.iter(),
             &self.surface_info,
             &self.image_subresource_range,
         )?;
@@ -337,58 +312,6 @@ impl Vulkan {
         self.initialize_descriptor_sets();
 
         Ok(())
-    }
-
-    pub fn new_multi_buffer(
-        &self,
-        name: &str,
-        size: vk::DeviceSize,
-    ) -> Result<Rc<MultiBuffer>, Error> {
-        let num_buffers = self.surface_info.desired_image_count as usize;
-        // TODO num buffers? What does this mean?
-        unsafe {
-            let declaration = self
-                .compute_shader_modules
-                .iter()
-                .find_map(|module| module.block_declaration(name))
-                .ok_or_else(|| {
-                    let msg = format!("No block '{name}' within shader module.");
-                    Error::Local(msg)
-                })?;
-            let storage = declaration.storage;
-            let binding = declaration.binding.ok_or_else(|| {
-                let msg = format!("Block '{name}' does not specify a binding.");
-                Error::Local(msg)
-            })?;
-            let set = declaration.checked_set();
-
-            let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
-
-            let descriptor_sets = &self.descriptor_sets_sets[set];
-            let buffer_descriptors: Vec<(
-                vk::DescriptorType,
-                [vk::DescriptorBufferInfo; 1],
-                vk::DescriptorSet,
-                u32,
-            )> = buffer
-                .buffers
-                .iter()
-                .zip(descriptor_sets.iter())
-                .map(|(buffer_unit, descriptor_set)| {
-                    let buffer_info = vk::DescriptorBufferInfo::builder()
-                        .buffer(**buffer_unit.buffer)
-                        .offset(0)
-                        .range(size)
-                        .build();
-
-                    (storage, [buffer_info], *descriptor_set, binding)
-                })
-                .collect();
-
-            self.write_descriptor_sets(&[], &buffer_descriptors);
-
-            Ok(buffer)
-        }
     }
 
     unsafe fn begin_command_buffer(&self) -> Result<(), Error> {
@@ -469,23 +392,76 @@ impl Vulkan {
         );
     }
 
-    unsafe fn transition_images_to_present(&self) -> Result<(), Error> {
-        debug!("Transitioning image layout from `UNDEFINED` to `PRESENT_SRC`");
-
+    unsafe fn transition_stale_images(&mut self) -> Result<(), Error> {
         self.reuse_command_buffer_fence.wait()?;
         self.reuse_command_buffer_fence.reset()?;
-
         self.begin_command_buffer()?;
-        for image in self.images.iter() {
-            self.image_memory_barrier_layout_transition(
-                *image,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::PRESENT_SRC_KHR,
-            );
+        let stale_images = mem::replace(&mut self.stale_images, Vec::new());
+        for (image, old_layout, new_layout) in stale_images.into_iter() {
+            self.image_memory_barrier_layout_transition(**image, old_layout, new_layout);
         }
         self.end_command_buffer()?;
-
         self.queue_submit_task()
+    }
+
+    unsafe fn flush_binding_updates(&mut self) -> Result<(), Error> {
+        if self.image_binding_updates.is_empty() && self.buffer_binding_updates.is_empty() {
+            return Ok(());
+        }
+
+        let image_descriptor_writes =
+            self.image_binding_updates
+                .drain(0..)
+                .map(|(name, views_and_samplers)| {
+                    let declaration = self
+                        .compute_shader_modules
+                        .iter()
+                        .find_map(|module| module.variable_declaration(&name))
+                        .unwrap_or_else(|| {
+                            let msg = format!("Declaration for {name} not found in any shader module.");
+                            return Err(Error::Local(msg));
+                        });
+
+                    let builder_stubs = views_and_samplers.into_iter().map(|(view, sampler)| ).collect();
+// TPOOOOOOOOOOOOOOOOOOOOODDDDDDDDDDDDDDDDDDDDDDDDDOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+                    (declaration, builder_stubs)
+
+                    //         vk::WriteDescriptorSet::builder()
+                    //             .descriptor_type(descriptor_type)
+                    //             .image_info(image_info)
+                    //             .dst_set(descriptor_set)
+                    //             .dst_binding(descriptor_binding)
+                    //             .dst_array_element(0)
+                    //             .build()
+                });
+        let buffer_descriptor_writes =
+            self.buffer_binding_updates
+                .drain(0..)
+                .map(|(name, buffers)| {
+                    //         vk::WriteDescriptorSet::builder()
+                    //             .descriptor_type(descriptor_type)
+                    //             .buffer_info(buffer_info)
+                    //             .dst_set(descriptor_set)
+                    //             .dst_binding(descriptor_binding)
+                    //             .dst_array_element(0)
+                    //             .build()
+                });
+
+        let write_descriptor_sets: Vec<vk::WriteDescriptorSet> = image_descriptor_writes
+            .chain(buffer_descriptor_writes)
+            .map(|(declaration, builders)| {
+                let present_binding = present_declaration
+                    .binding
+                    .expect("Present image has no binding");
+                let present_set = present_declaration.checked_set();
+                let present_descriptor_sets = &self.descriptor_sets_sets[present_set];
+            })
+            .collect();
+
+        self.device
+            .update_descriptor_sets(&write_descriptor_sets, &[]);
+
+        Ok(())
     }
 
     unsafe fn acquire_next_image(&self) -> Result<(usize, vk::Image), Error> {
@@ -496,7 +472,10 @@ impl Vulkan {
             vk::Fence::null(),
         )?;
 
-        Ok((present_index as usize, self.images[present_index as usize]))
+        Ok((
+            present_index as usize,
+            **self.swapchain_images[present_index as usize],
+        ))
     }
 
     unsafe fn push_constants(&self, push_constants: &PushConstants) {
@@ -636,16 +615,10 @@ impl App for Vulkan {
                     error!("Failed to reinitialize pipeline after resize: {:?}", error);
                     return ControlFlow::ExitWithCode(1);
                 }
-                self.stale_image_layout = true;
                 self.stale_swapchain = false;
             }
 
-            // Initially and after a resize, the image layout is stale.
-            if self.stale_image_layout {
-                self.transition_images_to_present().unwrap();
-                self.stale_image_layout = false;
-            }
-
+            self.transition_stale_images().unwrap();
             self.recompile_shader_if_modified().unwrap();
             self.render_next_frame().unwrap();
             ControlFlow::Poll

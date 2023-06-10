@@ -12,7 +12,7 @@ pub mod entry;
 pub mod fence;
 pub mod image_subresource_range;
 pub mod image_views;
-pub mod images;
+pub mod image;
 pub mod instance;
 pub mod memory_mapping;
 pub mod physical_device;

@@ -149,6 +149,13 @@ fn match_globals(
     Ok(local_size)
 }
 
+trait DescriptorInfo {
+    fn storage(&self) -> vk::DescriptorType;
+    fn set(&self) -> usize;
+    fn binding(&self) -> Result<u32, Error>;
+    fn name(&self) -> &str;
+}
+
 #[derive(Debug)]
 pub struct VariableDeclaration {
     pub name: String,
@@ -158,12 +165,27 @@ pub struct VariableDeclaration {
     pub type_format: Option<String>,
 }
 
-impl VariableDeclaration {
-    pub fn checked_set(&self) -> usize {
+impl DescriptorInfo for VariableDeclaration {
+    fn storage(&self) -> vk::DescriptorType {
+        vk::DescriptorType::STORAGE_IMAGE
+    }
+
+    fn set(&self) -> usize {
         self.set.unwrap_or_else(|| {
             warn!("Assuming set=0 for variable {}", self.name);
             0
         })
+    }
+
+    fn binding(&self) -> Result<u32, Error> {
+        self.binding.ok_or_else(|| {
+            let msg = format!("Block '{}' does not specify a binding.", self.name);
+            Error::Local(msg)
+        })
+    }
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -418,6 +440,30 @@ pub struct BlockDeclaration {
     pub set: Option<usize>,
     pub layout_qualifiers: Vec<String>,
     pub fields: Vec<BlockField>,
+}
+
+impl DescriptorInfo for BlockDeclaration {
+    fn storage(&self) -> vk::DescriptorType {
+        self.storage
+    }
+
+    fn set(&self) -> usize {
+        self.set.unwrap_or_else(|| {
+            warn!("Assuming set=0 for block {}", self.name);
+            0 // TODO move this to parsing stage.
+        })
+    }
+
+    fn binding(&self) -> Result<u32, Error> {
+        self.binding.ok_or_else(|| {
+            let msg = format!("Block '{}' does not specify a binding.", self.name);
+            Error::Local(msg)
+        }) // TODO move to parsing stage?
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl BlockDeclaration {
