@@ -11,14 +11,16 @@ layout(rgba32f, set=0, binding = 0) uniform image2D present;
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
-    ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
-    vec2 pixel_coords = vec2(ipixel_coords) / iimage_size;
-    ivec2 istore_coords = ivec2(ipixel_coords.x, iimage_size.y - 1 - ipixel_coords.y);
-    vec4 prev = imageLoad(intermediate, istore_coords);
-    imageStore(present, istore_coords, vec4(1) - prev);
+    ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
 
-    // int dft_index = 1 + int(pixel_coords.x * signal_dft.size);
-    // float dft_at_index = length(signal_dft.data[dft_index]);
-    // float dft_height = dft_at_index;
-    // bool pixel_below_dft = pixel_coords.y < dft_height;
+    vec4 sum = vec4(0);
+
+    for (int y = -3; y < 4; y++) {
+        for (int x = -3; x < 4; x++) {
+            float factor = 1 / float(abs(x) + abs(y));
+            sum += factor * imageLoad(intermediate, ipixel + 5 * ivec2(x, y));
+        }
+    }
+
+    imageStore(present, ipixel, sum);
 }

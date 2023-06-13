@@ -48,7 +48,8 @@ unsafe fn choose_physical_device_queue(
 pub struct PhysicalDevice {
     physical_device: vk::PhysicalDevice,
     pub compute_queue_family_index: u32,
-    pub memory_type_index: u32,
+    pub buffer_memory_type_index: u32,
+    pub image_memory_type_index: u32,
 }
 
 impl Deref for PhysicalDevice {
@@ -59,10 +60,20 @@ impl Deref for PhysicalDevice {
     }
 }
 
-fn choose_memory_type(index: usize, memory_type: &vk::MemoryType) -> Option<u32> {
+fn choose_buffer_memory_type(index: usize, memory_type: &vk::MemoryType) -> Option<u32> {
     let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL
         | vk::MemoryPropertyFlags::HOST_VISIBLE
         | vk::MemoryPropertyFlags::HOST_COHERENT;
+
+    if memory_type.property_flags.contains(desired_flags) {
+        Some(index as u32)
+    } else {
+        None
+    }
+}
+
+fn choose_image_memory_type(index: usize, memory_type: &vk::MemoryType) -> Option<u32> {
+    let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     if memory_type.property_flags.contains(desired_flags) {
         Some(index as u32)
@@ -84,16 +95,23 @@ impl PhysicalDevice {
         // For reference see: https://github.com/Traverse-Research/gpu-allocator/blob/main/src/vulkan/mod.rs#L742
         let memory_props = instance.get_physical_device_memory_properties(physical_device);
         let memory_types = &memory_props.memory_types[..memory_props.memory_type_count as _];
-        let memory_type_index = memory_types
+        let buffer_memory_type_index = memory_types
             .iter()
             .enumerate()
-            .find_map(|(index, memory_type)| choose_memory_type(index, memory_type))
+            .find_map(|(index, memory_type)| choose_buffer_memory_type(index, memory_type))
+            .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
+
+        let image_memory_type_index = memory_types
+            .iter()
+            .enumerate()
+            .find_map(|(index, memory_type)| choose_image_memory_type(index, memory_type))
             .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
 
         Ok(Rc::new(PhysicalDevice {
             physical_device,
             compute_queue_family_index,
-            memory_type_index,
+            buffer_memory_type_index,
+            image_memory_type_index,
         }))
     }
 }

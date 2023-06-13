@@ -15,7 +15,7 @@ pub struct Dft {
 
 impl Dft {
     pub fn output_byte_size(input_size: usize) -> usize {
-        (input_size / 2 + 1) * mem::size_of::<Complex<f32>>() as usize
+        (input_size / 2 + 1) * mem::size_of::<Complex<f32>>()
     }
 
     pub fn new(length: usize) -> Self {

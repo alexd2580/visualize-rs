@@ -10,15 +10,13 @@ use super::{
     descriptor_pool::DescriptorPool, descriptor_set_layout::DescriptorSetLayout, device::Device,
 };
 
-pub struct DescriptorSets {
-    descriptor_sets: Vec<vk::DescriptorSet>,
-}
+pub struct DescriptorSets(Vec<vk::DescriptorSet>);
 
 impl Deref for DescriptorSets {
     type Target = [vk::DescriptorSet];
 
     fn deref(&self) -> &Self::Target {
-        &self.descriptor_sets
+        &self.0
     }
 }
 
@@ -40,7 +38,7 @@ impl DescriptorSets {
 
             let descriptor_sets = device.allocate_descriptor_sets(&descriptor_set_allocate_info)?;
 
-            Ok(DescriptorSets { descriptor_sets })
+            Ok(DescriptorSets(descriptor_sets))
         };
 
         Ok(Rc::new(

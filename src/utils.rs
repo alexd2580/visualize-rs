@@ -10,3 +10,7 @@ pub fn mtime(path: &Path) -> Result<FileTime, Error> {
     })?;
     Ok(FileTime::from_last_modification_time(&metadata))
 }
+
+pub fn map_snd<A, B, C>(f: &dyn Fn(B) -> C) -> impl Fn((A, B)) -> (A, C) + '_ {
+    |(a, b)| (a, f(b))
+}

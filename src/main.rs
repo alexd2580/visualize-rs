@@ -134,7 +134,7 @@ fn run_main() -> Result<(), Error> {
     let args = Args::parse();
 
     let mut window = window::Window::new(1280, 1024)?;
-    let vulkan = vulkan::Vulkan::new(&window, &args.shader_paths)?;
+    let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths)?;
 
     let intermediate = vulkan.new_multi_image("intermediate")?;
 

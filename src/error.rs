@@ -2,9 +2,9 @@ use std::fmt::Display;
 
 #[derive(Debug)]
 pub enum CpalError {
-    SupportedStreamConfigsError(cpal::SupportedStreamConfigsError),
-    BuildStreamError(cpal::BuildStreamError),
-    PlayStreamError(cpal::PlayStreamError),
+    SupportedStreamConfigs(cpal::SupportedStreamConfigsError),
+    BuildStream(cpal::BuildStreamError),
+    PlayStream(cpal::PlayStreamError),
 }
 
 #[derive(Debug)]
@@ -58,18 +58,18 @@ impl From<glsl::parser::ParseError> for Error {
 
 impl From<cpal::SupportedStreamConfigsError> for Error {
     fn from(value: cpal::SupportedStreamConfigsError) -> Self {
-        Self::Cpal(CpalError::SupportedStreamConfigsError(value))
+        Self::Cpal(CpalError::SupportedStreamConfigs(value))
     }
 }
 
 impl From<cpal::BuildStreamError> for Error {
     fn from(value: cpal::BuildStreamError) -> Self {
-        Self::Cpal(CpalError::BuildStreamError(value))
+        Self::Cpal(CpalError::BuildStream(value))
     }
 }
 
 impl From<cpal::PlayStreamError> for Error {
     fn from(value: cpal::PlayStreamError) -> Self {
-        Self::Cpal(CpalError::PlayStreamError(value))
+        Self::Cpal(CpalError::PlayStream(value))
     }
 }

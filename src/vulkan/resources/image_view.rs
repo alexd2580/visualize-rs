@@ -54,7 +54,7 @@ impl ImageView {
         image_subresource_range: &ImageSubresourceRange,
     ) -> Result<Vec<Rc<Self>>, Error> {
         images
-            .map(|image| ImageView::new(&device, &image, &surface_info, &image_subresource_range))
+            .map(|image| ImageView::new(device, image, surface_info, image_subresource_range))
             .collect()
     }
 }

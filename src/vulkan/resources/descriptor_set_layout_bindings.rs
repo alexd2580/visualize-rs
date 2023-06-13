@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::error::Error;
 
-use super::shader_module::ShaderModule;
+use super::shader_module::{DescriptorInfo, ShaderModule};
 
 /// Hold the layout bindings grouped by their set number.
 pub struct DescriptorSetLayoutBindings(pub Vec<vk::DescriptorSetLayoutBinding>);
@@ -73,7 +73,7 @@ impl DescriptorSetLayoutBindings {
                 .map(|declaration| {
                     (
                         declaration.binding.unwrap(),
-                        declaration.checked_set(),
+                        declaration.set_index(),
                         vk::DescriptorType::STORAGE_IMAGE,
                     )
                 });

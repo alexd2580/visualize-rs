@@ -29,7 +29,11 @@ impl Buffer {
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = device.create_buffer(&buffer_create_info, None)?;
 
-        Ok(Rc::new(Buffer { size, device, buffer }))
+        Ok(Rc::new(Buffer {
+            size,
+            device,
+            buffer,
+        }))
     }
 
     pub unsafe fn get_required_memory_size(&self) -> vk::DeviceSize {

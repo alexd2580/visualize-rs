@@ -1,6 +1,7 @@
 use glsl::{parser::Parse as _, syntax};
 use log::{debug, warn};
 use std::{
+    fmt::Display,
     fs,
     io::{self, Cursor},
     ops::Deref,
@@ -149,9 +150,9 @@ fn match_globals(
     Ok(local_size)
 }
 
-trait DescriptorInfo {
+pub trait DescriptorInfo {
     fn storage(&self) -> vk::DescriptorType;
-    fn set(&self) -> usize;
+    fn set_index(&self) -> usize;
     fn binding(&self) -> Result<u32, Error>;
     fn name(&self) -> &str;
 }
@@ -170,7 +171,7 @@ impl DescriptorInfo for VariableDeclaration {
         vk::DescriptorType::STORAGE_IMAGE
     }
 
-    fn set(&self) -> usize {
+    fn set_index(&self) -> usize {
         self.set.unwrap_or_else(|| {
             warn!("Assuming set=0 for variable {}", self.name);
             0
@@ -447,7 +448,7 @@ impl DescriptorInfo for BlockDeclaration {
         self.storage
     }
 
-    fn set(&self) -> usize {
+    fn set_index(&self) -> usize {
         self.set.unwrap_or_else(|| {
             warn!("Assuming set=0 for block {}", self.name);
             0 // TODO move this to parsing stage.
@@ -631,6 +632,29 @@ impl Deref for ShaderModule {
     }
 }
 
+impl Display for ShaderModule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Shader module {:?}:", self.source_path)?;
+        writeln!(f, "  Main name:  {}", self.main_name)?;
+        writeln!(f, "  Local size: {:?}", self.local_size)?;
+        writeln!(f, "  Variable Declarations:")?;
+        for declaration in self.variable_declarations.iter() {
+            writeln!(f, "    {}:", declaration.name)?;
+            writeln!(f, "      Type:    {:?}", vk::DescriptorType::STORAGE_IMAGE)?;
+            writeln!(f, "      Set:     {:?}", declaration.set)?;
+            writeln!(f, "      Binding: {:?}", declaration.binding)?;
+        }
+        writeln!(f, "  Block Declarations:")?;
+        for declaration in self.block_declarations.iter() {
+            writeln!(f, "    {} {:?}:", declaration.name, declaration.identifier)?;
+            writeln!(f, "      Type:    {:?}", declaration.storage)?;
+            writeln!(f, "      Set:     {:?}", declaration.set)?;
+            writeln!(f, "      Binding: {:?}", declaration.binding)?;
+        }
+        Ok(())
+    }
+}
+
 impl ShaderModule {
     pub unsafe fn new(device: &Rc<Device>, source_path: &Path) -> Result<Rc<Self>, Error> {
         debug!("Creating shader module");
@@ -641,13 +665,11 @@ impl ShaderModule {
 
         debug!("Compiling shader");
         let shader_content = compile_shader_file(&source_path)?;
-
         let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
         let shader_module = device.create_shader_module(&shader_info, None)?;
-
         let main_name = "main".to_owned();
 
-        Ok(Rc::new(ShaderModule {
+        let shader_module = ShaderModule {
             device,
             source_path,
             shader_module,
@@ -655,7 +677,10 @@ impl ShaderModule {
             variable_declarations,
             block_declarations,
             main_name,
-        }))
+        };
+
+        debug!("Compiled shader: {shader_module}");
+        Ok(Rc::new(shader_module))
     }
 
     pub unsafe fn rebuild(&self) -> Result<Rc<Self>, Error> {

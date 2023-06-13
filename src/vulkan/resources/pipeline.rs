@@ -86,7 +86,7 @@ impl Pipeline {
         pipeline_layout: &PipelineLayout<PushConstants>,
     ) -> Result<Vec<Rc<Self>>, Error> {
         shader_modules
-            .map(|shader_module| Pipeline::new(&device, &shader_module, &pipeline_layout))
+            .map(|shader_module| Pipeline::new(device, shader_module, pipeline_layout))
             .collect()
     }
 }

@@ -26,6 +26,9 @@ impl Instance {
         debug!("Creating instance");
         let app_info = vk::ApplicationInfo::builder().api_version(vk::make_api_version(0, 1, 3, 0));
         let extension_names = window.enumerate_required_extensions()?;
+        for e in &extension_names {
+            debug!("Enabled instance extension {:?}", CStr::from_ptr(*e));
+        }
 
         // List available layers. TODO check that the validation layer exists.
         // let layer_properties = entry
@@ -33,6 +36,9 @@ impl Instance {
         let validation_layer =
             CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0");
         let layer_names = [validation_layer.as_ptr()];
+        for l in &layer_names {
+            debug!("Enabled layer {:?}", CStr::from_ptr(*l));
+        }
 
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)

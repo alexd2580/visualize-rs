@@ -11,12 +11,12 @@ use super::{
     swapchain_loader::SwapchainLoader,
 };
 
-struct RegularImage {
+pub struct RegularImage {
     device: Rc<Device>,
     image: vk::Image,
 }
 
-struct SwapchainImage {
+pub struct SwapchainImage {
     image: vk::Image,
 }
 
@@ -30,8 +30,8 @@ impl Deref for Image {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Image::Regular(RegularImage { image, .. }) => &image,
-            Image::Swapchain(SwapchainImage { image }) => &image,
+            Image::Regular(RegularImage { image, .. }) => image,
+            Image::Swapchain(SwapchainImage { image }) => image,
         }
     }
 }
@@ -64,8 +64,8 @@ impl Image {
         debug!("Creating images");
         let images = swapchain_loader
             .get_swapchain_images(**swapchain)?
-            .iter()
-            .map(|&image| Rc::new(Image::Swapchain(SwapchainImage { image })))
+            .into_iter()
+            .map(|image| Rc::new(Image::Swapchain(SwapchainImage { image })))
             .collect();
         Ok(images)
     }

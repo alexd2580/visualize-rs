@@ -4,7 +4,7 @@ use ash::{self, vk};
 
 use crate::error::Error;
 
-use super::{device::Device, physical_device::PhysicalDevice};
+use super::device::Device;
 
 pub struct DeviceMemory {
     device: Rc<Device>,
@@ -22,12 +22,11 @@ impl Deref for DeviceMemory {
 
 impl DeviceMemory {
     pub unsafe fn new(
-        physical_device: &PhysicalDevice,
+        memory_type_index: u32,
         device: &Rc<Device>,
         size: vk::DeviceSize,
     ) -> Result<Rc<Self>, Error> {
         let device = device.clone();
-        let memory_type_index = physical_device.memory_type_index;
         let memory_alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(memory_type_index);
