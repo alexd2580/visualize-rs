@@ -23,11 +23,11 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 
 - [x] Sequence of multiple shaders
 - [x] Compute norm of DFT once instead of inside shader
+- [x] Different push-constants per shader
 - [ ] Exponentialize dft index on CPU side once?
 - [ ] Resize client images on resize. Static vs dynamic? Vulkan managed?
 - [ ] Fix descriptor set allocation and binding
 - [ ] Separate descriptor sets per shader
 - [ ] Bind images in different binding modes, e.g. sampler vs storage_image
 - [ ] Improve sequence of vulkan high-level operations: swapchain reinit, image reinit, etc...
-- [ ] Different push-constants per shader
 - [ ] Run the app even without pipeline etc, when no shaders are working from the get-go.
