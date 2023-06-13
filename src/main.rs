@@ -48,7 +48,6 @@ fn run_dft(
     buffer.write_to_buffer(dft.get_input_vec());
     dft.apply_hamming();
     dft.run_transform();
-    dft.apply_scaling();
     dft.write_to_pointer(dft_gpu.mapped(vulkan.binding_index));
 }
 

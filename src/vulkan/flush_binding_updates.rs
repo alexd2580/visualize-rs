@@ -48,7 +48,7 @@ impl Vulkan {
     fn variable_declaration(&self, name: &str) -> Result<&analysis::VariableDeclaration, Error> {
         self.compute_shader_modules
             .iter()
-            .find_map(|module| module.variable_declaration(&name))
+            .find_map(|module| module.variable_declaration(name))
             .ok_or_else(|| {
                 let msg = format!("Declaration for {name} not found in any shader module.");
                 Error::Local(msg)
@@ -58,7 +58,7 @@ impl Vulkan {
     fn block_declaration(&self, name: &str) -> Result<&analysis::BlockDeclaration, Error> {
         self.compute_shader_modules
             .iter()
-            .find_map(|module| module.block_declaration(&name))
+            .find_map(|module| module.block_declaration(name))
             .ok_or_else(|| {
                 let msg = format!("Declaration for {name} not found in any shader module.");
                 Error::Local(msg)
@@ -146,6 +146,7 @@ impl Vulkan {
             ))
         }
 
-        Ok(self.device.update_descriptor_sets(&descriptor_writes, &[]))
+        self.device.update_descriptor_sets(&descriptor_writes, &[]);
+        Ok(())
     }
 }

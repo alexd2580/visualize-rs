@@ -11,11 +11,13 @@ pub struct Dft {
     input: Vec<f32>,
     scratch: Vec<Complex<f32>>,
     output: Vec<Complex<f32>>,
+
+    simple: Vec<f32>,
 }
 
 impl Dft {
     pub fn output_byte_size(input_size: usize) -> usize {
-        (input_size / 2 + 1) * mem::size_of::<Complex<f32>>()
+        (input_size / 2 + 1) * mem::size_of::<f32>()
     }
 
     pub fn new(length: usize) -> Self {
@@ -36,12 +38,15 @@ impl Dft {
             // debug!("{}", *val);
         }
 
+        let simple = vec![0.0; length / 2 + 1];
+
         Dft {
             r2c,
             hamming,
             input,
             scratch,
             output,
+            simple,
         }
     }
 
@@ -51,23 +56,18 @@ impl Dft {
 
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
-            let size = self.output.len() as u32;
+            let size = self.simple.len() as u32;
             *target.cast() = size;
             let target = target.add(mem::size_of::<i32>());
 
-            self.output.as_ptr().copy_to(target.cast(), size as usize);
+            self.simple.as_ptr().copy_to(target.cast(), size as usize);
         }
     }
 
     pub fn apply_hamming(&mut self) {
-        // let mut min = f32::INFINITY;
-        // let mut max = f32::NEG_INFINITY;
         for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
-            // min = min.min(*val);
-            // max = max.max(*val);
             *val *= factor;
         }
-        // debug!("inp {min:.2} {max:.2}");
     }
 
     pub fn run_transform(&mut self) {
@@ -75,24 +75,11 @@ impl Dft {
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
             .unwrap();
 
-        // let mut minx = f32::INFINITY;
-        // let mut miny = f32::INFINITY;
-        // let mut maxx = f32::NEG_INFINITY;
-        // let mut maxy = f32::NEG_INFINITY;
-        // for val in self.output.iter() {
-        //     minx = minx.min(val.re);
-        //     maxx = maxx.max(val.re);
-        //     miny = miny.min(val.im);
-        //     maxy = maxy.max(val.im);
-        // }
-        // debug!("dft {minx:.2} {maxx:.2} {miny:.2} {maxy:.2}");
-    }
-
-    pub fn apply_scaling(&mut self) {
         // Experimentally determined factor, scales the majority of frequencies to [0..1].
         let factor = 1f32 / (0.27 * self.input.len() as f32);
-        for val in self.output.iter_mut() {
-            *val *= factor;
+        for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
+            let next_val = output.norm() * factor;
+            *simple = 0f32.max(*simple - 0.015).max(next_val);
         }
     }
 }

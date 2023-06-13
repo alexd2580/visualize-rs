@@ -36,6 +36,9 @@ struct PushConstants {
     num_frames: u32,
 }
 
+type ImageBindingUpdate = (String, Vec<(Rc<ImageView>, Rc<Sampler>)>);
+type BufferBindingUpdate = (String, Vec<Rc<Buffer>>);
+
 // Define fields in reverse drop order.
 pub struct Vulkan {
     // Other.
@@ -68,8 +71,8 @@ pub struct Vulkan {
     swapchain_loader: Rc<SwapchainLoader>,
 
     // Staleness markers.
-    image_binding_updates: Vec<(String, Vec<(Rc<ImageView>, Rc<Sampler>)>)>,
-    buffer_binding_updates: Vec<(String, Vec<Rc<Buffer>>)>,
+    image_binding_updates: Vec<ImageBindingUpdate>,
+    buffer_binding_updates: Vec<BufferBindingUpdate>,
     stale_images: Vec<(Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
     stale_swapchain: bool,
 
@@ -267,7 +270,7 @@ impl Vulkan {
             self.swapchain.as_ref().map(|swapchain| ***swapchain),
         )?);
         self.swapchain_images =
-            Image::many_from_swapchain(&self.swapchain_loader, &self.swapchain())?;
+            Image::many_from_swapchain(&self.swapchain_loader, self.swapchain())?;
 
         for image in self.swapchain_images.iter() {
             self.stale_images.push((
@@ -375,7 +378,7 @@ impl Vulkan {
         self.reuse_command_buffer_fence.wait()?;
         self.reuse_command_buffer_fence.reset()?;
         self.begin_command_buffer()?;
-        let stale_images = mem::replace(&mut self.stale_images, Vec::new());
+        let stale_images = mem::take(&mut self.stale_images);
         for (image, old_layout, new_layout) in stale_images.into_iter() {
             self.image_memory_barrier_layout_transition(**image, old_layout, new_layout);
         }

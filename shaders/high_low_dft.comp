@@ -26,17 +26,17 @@ layout(set=0, binding = 2) buffer HighPass {
 
 layout(set=0, binding = 3) buffer Dft {
     int size;
-    vec2 data[];
+    float data[];
 } signal_dft;
 
 layout(set=0, binding = 4) buffer DftLowPass {
     int size;
-    vec2 data[];
+    float data[];
 } low_pass_dft;
 
 layout(set=0, binding = 5) buffer DftHighPass {
     int size;
-    vec2 data[];
+    float data[];
 } high_pass_dft;
 
 layout(rgba32f, set=0, binding = 6) uniform image2D intermediate;
@@ -112,19 +112,19 @@ float dft_color(int index, float value, float y) {
 
 vec3 dft_raw(vec2 pos) {
     int index = dft_index(pos.x);
-    float dft_value = length(signal_dft.data[index]);
+    float dft_value = signal_dft.data[index];
     return vec3(dft_color(index, dft_value, pos.y), 0, 0);
 }
 
 vec3 dft_low(vec2 pos) {
     int index = dft_index(pos.x);
-    float dft_value = length(low_pass_dft.data[index]);
+    float dft_value = low_pass_dft.data[index];
     return vec3(0, dft_color(index, dft_value, pos.y), 0);
 }
 
 vec3 dft_high(vec2 pos) {
     int index = dft_index(pos.x);
-    float dft_value = length(signal_dft.data[index]) - length(low_pass_dft.data[index]);
+    float dft_value = signal_dft.data[index] - low_pass_dft.data[index];
     return vec3(0, 0, dft_color(index, dft_value, pos.y));
 }
 
