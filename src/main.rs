@@ -51,6 +51,13 @@ fn run_dft(
     dft.write_to_pointer(dft_gpu.mapped(vulkan.binding_index));
 }
 
+// This struct is not supposed to be read on the CPU, it only maps the structure of the push
+// constants block so that it can be written to the gpu memory properly.
+#[allow(dead_code)]
+struct PushConstants {
+    num_frames: u32,
+}
+
 impl window::App for App {
     fn run_frame(&mut self) -> winit::event_loop::ControlFlow {
         let read_index = self.low_pass.write_index;

@@ -1,4 +1,4 @@
-use std::{mem, ops::Deref, path::Path, rc::Rc};
+use std::{collections::HashMap, mem, ops::Deref, path::Path, rc::Rc};
 
 use ash::vk;
 use filetime::FileTime;
@@ -29,15 +29,12 @@ use self::resources::{
     swapchain_loader::SwapchainLoader,
 };
 
-// This struct is not supposed to be read on the CPU, it only maps the structure of the push
-// constants block so that it can be written to the gpu memory properly.
-#[allow(dead_code)]
-struct PushConstants {
-    num_frames: u32,
-}
-
 type ImageBindingUpdate = (String, Vec<(Rc<ImageView>, Rc<Sampler>)>);
 type BufferBindingUpdate = (String, Vec<Rc<Buffer>>);
+
+enum Value {
+    U32(u32),
+}
 
 // Define fields in reverse drop order.
 pub struct Vulkan {
@@ -49,9 +46,9 @@ pub struct Vulkan {
     compute_complete_semaphore: Rc<Semaphore>,
     reuse_command_buffer_fence: Rc<Fence>,
 
+    // Pipelines.
     pipelines: Vec<Rc<Pipeline>>,
-
-    pipeline_layout: Rc<PipelineLayout<PushConstants>>,
+    pipeline_layouts: Vec<Rc<PipelineLayout>>,
 
     // Descriptors.
     descriptor_sets_sets: Rc<Vec<DescriptorSets>>,
@@ -161,10 +158,17 @@ impl Vulkan {
                 surface_info.desired_image_count,
             )?;
 
-            let pipeline_layout = PipelineLayout::new(&device, &descriptor_set_layouts)?;
-
-            let pipelines =
-                Pipeline::many(&device, compute_shader_modules.iter(), &pipeline_layout)?;
+            // Pipelines.
+            let pipeline_layouts = PipelineLayout::many(
+                &device,
+                compute_shader_modules.iter(),
+                &descriptor_set_layouts,
+            )?;
+            let pipelines = Pipeline::many(
+                &device,
+                compute_shader_modules.iter(),
+                pipeline_layouts.iter(),
+            )?;
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
             let image_acquired_semaphore = Semaphore::new(&device)?;
@@ -199,7 +203,7 @@ impl Vulkan {
                 _descriptor_set_layouts: descriptor_set_layouts,
                 _descriptor_pool: descriptor_pool,
                 descriptor_sets_sets,
-                pipeline_layout,
+                pipeline_layouts,
                 pipelines,
                 reuse_command_buffer_fence,
                 image_acquired_semaphore,
@@ -229,10 +233,15 @@ impl Vulkan {
 
                 match module.rebuild() {
                     Ok(new_module) => {
-                        let new_pipeline =
-                            Pipeline::new(&self.device, &new_module, &self.pipeline_layout)?;
+                        let new_layout = PipelineLayout::new(
+                            &self.device,
+                            &new_module,
+                            &self._descriptor_set_layouts,
+                        )?;
+                        let new_pipeline = Pipeline::new(&self.device, &new_module, &new_layout)?;
 
                         self.compute_shader_modules[index] = new_module;
+                        self.pipeline_layouts[index] = new_layout;
                         self.pipelines[index] = new_pipeline;
                     }
                     Err(err) => error!("{}", err),
@@ -400,22 +409,56 @@ impl Vulkan {
         ))
     }
 
-    unsafe fn push_constants(&self, push_constants: &PushConstants) {
-        unsafe fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-            ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
-        }
+    unsafe fn push_constants(
+        &self,
+        pipeline_layout: &PipelineLayout,
+        shader_module: &ShaderModule,
+    ) {
+        if let Some(declaration) = shader_module.push_constants_declaration() {
+            // Prepare available fields.
+            let mut avail_fields = HashMap::new();
+            avail_fields.insert("frame_index".to_owned(), Value::U32(self.num_frames));
 
-        let constants = as_u8_slice(push_constants);
-        self.device.cmd_push_constants(
-            **self.command_buffer,
-            **self.pipeline_layout,
-            vk::ShaderStageFlags::COMPUTE,
-            0,
-            constants,
-        );
+            // Allocate constants memory.
+            let constants_size = declaration.byte_size().unwrap() as usize;
+            let mut constants = vec![0; constants_size];
+            let constants_ptr = constants.as_mut_ptr();
+
+            // Write requested fields into memory.
+            for field in &declaration.fields {
+                let offset = field.offset.unwrap_or_else(|| {
+                    warn!("Assuming offset 0, does this work correctly?");
+                    0
+                }) as usize;
+
+                if let Some(..) = field.dimensions {
+                    warn!("Don't know how to handle {field:?}");
+                }
+
+                match avail_fields.get(&field.name) {
+                    None => error!("{} is not a registered push constant field", field.name),
+                    Some(Value::U32(value)) => {
+                        *constants_ptr.add(offset).cast() = value;
+                    } // _ => warn!("Don't know how to handle {field:?}"),
+                }
+            }
+
+            // Update on GPU.
+            self.device.cmd_push_constants(
+                **self.command_buffer,
+                **pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                &constants,
+            );
+        }
     }
 
-    unsafe fn bind_descriptor_set(&self, descriptor_set_indices: &[usize]) {
+    unsafe fn bind_descriptor_set(
+        &self,
+        pipeline_layout: &PipelineLayout,
+        descriptor_set_indices: &[usize],
+    ) {
         let descriptor_sets = self
             .descriptor_sets_sets
             .iter()
@@ -426,7 +469,7 @@ impl Vulkan {
         self.device.cmd_bind_descriptor_sets(
             **self.command_buffer,
             vk::PipelineBindPoint::COMPUTE,
-            **self.pipeline_layout,
+            **pipeline_layout,
             0,
             &descriptor_sets,
             &[],
@@ -480,17 +523,14 @@ impl Vulkan {
             vk::ImageLayout::GENERAL,
         );
 
-        let push_constants = PushConstants {
-            num_frames: self.num_frames,
-        };
-        self.push_constants(&push_constants);
-        self.bind_descriptor_set(&[present_index, self.binding_index]);
-
         let iter = self
             .pipelines
             .iter()
-            .zip(self.compute_shader_modules.iter());
-        for (pipeline, shader_module) in iter {
+            .zip(self.compute_shader_modules.iter())
+            .zip(self.pipeline_layouts.iter());
+        for ((pipeline, shader_module), pipeline_layout) in iter {
+            self.push_constants(pipeline_layout, shader_module);
+            self.bind_descriptor_set(pipeline_layout, &[present_index, self.binding_index]);
             self.bind_pipeline(pipeline);
             self.dispatch(shader_module);
         }
@@ -539,7 +579,6 @@ impl Vulkan {
 }
 
 impl App for Vulkan {
-    // TODO Remove unwraps
     fn run_frame(&mut self) -> ControlFlow {
         match unsafe { self.tick() } {
             Err(error) => {

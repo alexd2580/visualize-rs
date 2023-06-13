@@ -159,6 +159,15 @@ impl ShaderModule {
         ShaderModule::new(&self.device, &self.source_path)
     }
 
+    pub fn push_constants_declaration(&self) -> Option<&analysis::BlockDeclaration> {
+        self.block_declarations.iter().find(|declaration| {
+            declaration
+                .layout_qualifiers
+                .iter()
+                .any(|qualifier| qualifier == "push_constant")
+        })
+    }
+
     pub fn variable_declaration(&self, name: &str) -> Option<&analysis::VariableDeclaration> {
         self.variable_declarations
             .iter()

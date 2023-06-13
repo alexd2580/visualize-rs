@@ -219,10 +219,10 @@ fn match_init_declarator_list(
 
 #[derive(Debug)]
 pub struct BlockField {
-    _name: String,
-    type_specifier: syntax::TypeSpecifierNonArray,
-    _offset: Option<i32>,
-    _dimensions: Option<Vec<Option<i32>>>,
+    pub name: String,
+    pub type_specifier: syntax::TypeSpecifierNonArray,
+    pub offset: Option<i32>,
+    pub dimensions: Option<Vec<Option<i32>>>,
 }
 
 impl BlockField {
@@ -346,10 +346,10 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
     };
 
     Ok(BlockField {
-        _name: name,
+        name,
         type_specifier,
-        _offset: offset,
-        _dimensions: dimensions,
+        offset,
+        dimensions,
     })
 }
 

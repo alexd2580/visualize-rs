@@ -14,3 +14,7 @@ pub fn mtime(path: &Path) -> Result<FileTime, Error> {
 pub fn map_snd<A, B, C>(f: &dyn Fn(B) -> C) -> impl Fn((A, B)) -> (A, C) + '_ {
     |(a, b)| (a, f(b))
 }
+
+unsafe fn _as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
+}
