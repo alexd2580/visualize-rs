@@ -32,6 +32,10 @@ struct App {
     high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
     _intermediate: Rc<vulkan::multi_image::MultiImage>,
+    _highlights: Rc<vulkan::multi_image::MultiImage>,
+    _bloom_h: Rc<vulkan::multi_image::MultiImage>,
+    _bloom_hv: Rc<vulkan::multi_image::MultiImage>,
+
     vulkan: vulkan::Vulkan,
 }
 
@@ -104,6 +108,11 @@ impl window::App for App {
     }
 
     fn handle_resize(&mut self, new_size: (u32, u32)) -> Result<(), error::Error> {
+        // self._intermediate = self.vulkan.new_multi_image("intermediate")?;
+        // self._highlights = self.vulkan.new_multi_image("highlights")?;
+        // self._bloom_h = self.vulkan.new_multi_image("bloom_h")?;
+        // self._bloom_hv = self.vulkan.new_multi_image("bloom_hv")?;
+
         self.vulkan.handle_resize(new_size)
     }
 }
@@ -137,6 +146,9 @@ fn run_main() -> Result<(), Error> {
     let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths)?;
 
     let intermediate = vulkan.new_multi_image("intermediate")?;
+    let highlights = vulkan.new_multi_image("highlights")?;
+    let bloom_h = vulkan.new_multi_image("bloom_h")?;
+    let bloom_hv = vulkan.new_multi_image("bloom_hv")?;
 
     let sample_rate = 44100;
     let audio_buffer_size = sample_rate * args.audio_buffer_sec;
@@ -184,6 +196,9 @@ fn run_main() -> Result<(), Error> {
             high_pass_dft,
             high_pass_dft_gpu,
             _intermediate: intermediate,
+            _highlights: highlights,
+            _bloom_h: bloom_h,
+            _bloom_hv: bloom_hv,
             vulkan,
         };
         window.run_main_loop(&mut app);

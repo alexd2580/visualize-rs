@@ -5,14 +5,15 @@ use ash::vk;
 use crate::{
     error::Error,
     utils::map_snd,
-    vulkan::resources::{
-        buffer::Buffer, image_view::ImageView, sampler::Sampler, shader_module::DescriptorInfo,
+    vulkan::{
+        resources::{
+            buffer::Buffer,
+            image_view::ImageView,
+            sampler::Sampler,
+            shader_module::analysis::{self, DescriptorInfo},
+        },
+        Vulkan,
     },
-};
-
-use super::{
-    resources::shader_module::{BlockDeclaration, VariableDeclaration},
-    Vulkan,
 };
 
 fn build_image_info(
@@ -44,7 +45,7 @@ fn build_buffer_info(buffers: Vec<Rc<Buffer>>) -> Vec<[vk::DescriptorBufferInfo;
 }
 
 impl Vulkan {
-    fn variable_declaration(&self, name: &str) -> Result<&VariableDeclaration, Error> {
+    fn variable_declaration(&self, name: &str) -> Result<&analysis::VariableDeclaration, Error> {
         self.compute_shader_modules
             .iter()
             .find_map(|module| module.variable_declaration(&name))
@@ -54,7 +55,7 @@ impl Vulkan {
             })
     }
 
-    fn block_declaration(&self, name: &str) -> Result<&BlockDeclaration, Error> {
+    fn block_declaration(&self, name: &str) -> Result<&analysis::BlockDeclaration, Error> {
         self.compute_shader_modules
             .iter()
             .find_map(|module| module.block_declaration(&name))

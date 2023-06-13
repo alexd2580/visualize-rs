@@ -6,21 +6,27 @@ layout(push_constant, std140) uniform PushConstants {
   layout(offset = 0) uint frame_index;
 } constants;
 
-layout(rgba32f, set=0, binding = 7) uniform image2D intermediate;
-layout(rgba32f, set=0, binding = 0) uniform image2D present;
+layout(rgba32f, set=0, binding = 6) uniform image2D intermediate;
+layout(rgba32f, set=0, binding = 9) uniform image2D bloom_hv;
+layout(rgba32f, set=0, binding = 10) uniform image2D present;
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
 
-    vec4 sum = vec4(0);
+    vec3 color = imageLoad(intermediate, ipixel).rgb;
+    vec3 bloom = imageLoad(bloom_hv, ipixel).rgb;
 
-    for (int y = -3; y < 4; y++) {
-        for (int x = -3; x < 4; x++) {
-            float factor = 1 / float(abs(x) + abs(y));
-            sum += factor * imageLoad(intermediate, ipixel + 5 * ivec2(x, y));
-        }
-    }
+    // additive blending
+    // color += bloom;
 
-    imageStore(present, ipixel, sum);
+    // // tone mapping
+    // float exposure = 1.0;
+    // vec3 result = vec3(1.0) - exp(-color * exposure);
+
+    // // also gamma correct while we're at it
+    // const float gamma = 2.2;
+    // result = pow(result, vec3(1.0 / gamma));
+
+    imageStore(present, ipixel, vec4(color + bloom, 1));
 }

@@ -1,0 +1,56 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant, std140) uniform PushConstants {
+  layout(offset = 0) uint frame_index;
+} constants;
+
+layout(rgba32f, set=0, binding = 7) uniform image2D highlights;
+layout(rgba32f, set=0, binding = 8) uniform image2D bloom_h;
+
+const float weight[32] = float[] (
+    0.037724636370338606,
+    0.03755734335743402,
+    0.03705990242171321,
+    0.03624543222048296,
+    0.035135157050110354,
+    0.03375748783670432,
+    0.03214681457399288,
+    0.030342081818725785,
+    0.028385229481818822,
+    0.02631958570522343,
+    0.024188297001312496,
+    0.02203287349547887,
+    0.019891914957858393,
+    0.01780006759101955,
+    0.01578724372142198,
+    0.013878118146316034,
+    0.01209189735090647,
+    0.01044234235929466,
+    0.008938013542322376,
+    0.007582696848995631,
+    0.00637596586543919,
+    0.005313832708946518,
+    0.0043894426259008055,
+    0.003593771666696362,
+    0.002916293222926891,
+    0.0023455867595059614,
+    0.0018698700214519078,
+    0.0014774437014553733,
+    0.0011570445141106333,
+    0.0008981084836522481,
+    0.0006909508169679295,
+    0.0005268719466444789
+);
+
+void main() {
+    ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
+    vec3 result = imageLoad(highlights, ipixel).rgb * weight[0];
+    for(int i = 1; i < 32; i++)
+    {
+        result += imageLoad(highlights, ipixel + ivec2(i, 0)).rgb * weight[i];
+        result += imageLoad(highlights, ipixel - ivec2(i, 0)).rgb * weight[i];
+    }
+    imageStore(bloom_h, ipixel, vec4(result, 1.0));
+}
