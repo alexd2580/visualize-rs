@@ -155,10 +155,6 @@ impl ShaderModule {
         Ok(Rc::new(shader_module))
     }
 
-    pub unsafe fn rebuild(&self) -> Result<Rc<Self>, Error> {
-        ShaderModule::new(&self.device, &self.source_path)
-    }
-
     pub fn push_constants_declaration(&self) -> Option<&analysis::BlockDeclaration> {
         self.block_declarations.iter().find(|declaration| {
             declaration

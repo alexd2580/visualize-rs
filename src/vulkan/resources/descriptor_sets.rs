@@ -7,13 +7,14 @@ use ash::vk;
 use crate::error::Error;
 
 use super::{
-    descriptor_pool::DescriptorPool, descriptor_set_layout::DescriptorSetLayout, device::Device,
+    descriptor_layouts::DescriptorLayouts, descriptor_pool::DescriptorPool, device::Device,
 };
 
-pub struct DescriptorSets(Vec<vk::DescriptorSet>);
+type DescriptorSetInstances = Vec<vk::DescriptorSet>;
+pub struct DescriptorSets(Vec<DescriptorSetInstances>);
 
 impl Deref for DescriptorSets {
-    type Target = [vk::DescriptorSet];
+    type Target = [DescriptorSetInstances];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -23,29 +24,27 @@ impl Deref for DescriptorSets {
 impl DescriptorSets {
     pub unsafe fn new(
         device: &Device,
-        descriptor_set_layouts: &[DescriptorSetLayout],
+        descriptor_layouts: &DescriptorLayouts,
         descriptor_pool: &DescriptorPool,
         num_sets: u32,
-    ) -> Result<Rc<Vec<Self>>, Error> {
+    ) -> Result<Rc<Self>, Error> {
         debug!("Creating descriptor sets");
 
-        let create_descriptor_set = |descriptor_set_layout: &DescriptorSetLayout| {
-            let descriptor_set_layout = **descriptor_set_layout;
-            let descriptor_set_layouts = vec![descriptor_set_layout; num_sets as usize];
+        let create_descriptor_set = |descriptor_layout: &vk::DescriptorSetLayout| {
+            let descriptor_layout = *descriptor_layout;
+            let descriptor_layouts = vec![descriptor_layout; num_sets as usize];
             let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
                 .descriptor_pool(**descriptor_pool)
-                .set_layouts(&descriptor_set_layouts);
+                .set_layouts(&descriptor_layouts);
 
-            let descriptor_sets = device.allocate_descriptor_sets(&descriptor_set_allocate_info)?;
-
-            Ok(DescriptorSets(descriptor_sets))
+            Ok(device.allocate_descriptor_sets(&descriptor_set_allocate_info)?)
         };
 
-        Ok(Rc::new(
-            descriptor_set_layouts
-                .iter()
-                .map(create_descriptor_set)
-                .collect::<Result<_, Error>>()?,
-        ))
+        let descriptor_sets = descriptor_layouts
+            .iter()
+            .map(create_descriptor_set)
+            .collect::<Result<_, Error>>()?;
+
+        Ok(Rc::new(DescriptorSets(descriptor_sets)))
     }
 }

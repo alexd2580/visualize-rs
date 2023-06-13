@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::error::Error;
 
-use super::{descriptor_set_layout_bindings::DescriptorSetLayoutBindings, device::Device};
+use super::{descriptor_bindings::DescriptorBindings, device::Device};
 
 /// Pool holding memory for allocation of descriptors. Does not allocate the memory that the
 /// descriptors are backed with, only the descriptors themselves.
@@ -26,7 +26,7 @@ impl Deref for DescriptorPool {
 impl DescriptorPool {
     pub unsafe fn new(
         device: &Rc<Device>,
-        descriptor_set_layout_binding_sets: &Vec<DescriptorSetLayoutBindings>,
+        descriptor_bindings: &DescriptorBindings,
         set_count: u32,
     ) -> Result<Rc<Self>, Error> {
         // TODO Check the way descriptors are allocated (set count, descriptor count etc.).
@@ -34,8 +34,8 @@ impl DescriptorPool {
         let device = device.clone();
 
         let mut accumulated_bindings = HashMap::new();
-        for binding_set in descriptor_set_layout_binding_sets {
-            for binding in &**binding_set {
+        for binding_set in descriptor_bindings.iter() {
+            for binding in binding_set {
                 let &old_count = accumulated_bindings
                     .get(&binding.descriptor_type)
                     .unwrap_or(&0);

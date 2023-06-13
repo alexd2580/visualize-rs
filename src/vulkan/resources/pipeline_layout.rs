@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc, slice::Iter};
+use std::{ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -6,9 +6,7 @@ use ash::vk;
 
 use crate::error::Error;
 
-use super::{
-    descriptor_set_layout::DescriptorSetLayout, device::Device, shader_module::ShaderModule,
-};
+use super::{descriptor_layouts::DescriptorLayouts, device::Device, shader_module::ShaderModule};
 
 pub struct PipelineLayout {
     device: Rc<Device>,
@@ -27,7 +25,7 @@ impl PipelineLayout {
     pub unsafe fn new(
         device: &Rc<Device>,
         shader_module: &ShaderModule,
-        descriptor_set_layouts: &[DescriptorSetLayout],
+        descriptor_layouts: &DescriptorLayouts,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating pipeline layout");
         let device = device.clone();
@@ -53,26 +51,15 @@ impl PipelineLayout {
             );
         }
 
-        let descriptor_set_layouts: Vec<_> = descriptor_set_layouts.iter().map(|x| **x).collect();
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constant_ranges)
-            .set_layouts(&descriptor_set_layouts);
+            .set_layouts(&descriptor_layouts);
         let pipeline_layout = device.create_pipeline_layout(&layout_create_info, None)?;
 
         Ok(Rc::new(PipelineLayout {
             device,
             pipeline_layout,
         }))
-    }
-
-    pub unsafe fn many(
-        device: &Rc<Device>,
-        shader_modules: Iter<impl Deref<Target = ShaderModule>>,
-        descriptor_set_layouts: &[DescriptorSetLayout],
-    ) -> Result<Vec<Rc<Self>>, Error> {
-        shader_modules
-            .map(|module| PipelineLayout::new(device, module, descriptor_set_layouts))
-            .collect()
     }
 }
 

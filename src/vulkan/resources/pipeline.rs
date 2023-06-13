@@ -1,4 +1,4 @@
-use std::{ffi::CString, ops::Deref, rc::Rc, slice::Iter};
+use std::{ffi::CString, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -56,19 +56,6 @@ impl Pipeline {
         let pipeline = pipelines[0];
 
         Ok(Rc::new(Pipeline { device, pipeline }))
-    }
-
-    pub unsafe fn many(
-        device: &Rc<Device>,
-        shader_modules: Iter<impl Deref<Target = ShaderModule>>,
-        pipeline_layouts: Iter<impl Deref<Target = PipelineLayout>>,
-    ) -> Result<Vec<Rc<Self>>, Error> {
-        shader_modules
-            .zip(pipeline_layouts)
-            .map(|(shader_module, pipeline_layout)| {
-                Pipeline::new(device, shader_module, pipeline_layout)
-            })
-            .collect()
     }
 }
 
