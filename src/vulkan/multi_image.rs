@@ -117,7 +117,7 @@ impl Vulkan {
                 .iter()
                 .map(|unit| (unit.view.clone(), self.sampler.clone()))
                 .collect::<Vec<_>>();
-            self.link_image(name, &views_and_samplers);
+            self.register_image(name, &views_and_samplers);
 
             Ok(image)
         }

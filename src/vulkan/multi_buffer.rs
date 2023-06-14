@@ -95,7 +95,7 @@ impl Vulkan {
                 .iter()
                 .map(|unit| unit.buffer.clone())
                 .collect::<Vec<_>>();
-            self.link_buffer(name, &buffers);
+            self.register_buffer(name, &buffers);
             Ok(buffer)
         }
     }

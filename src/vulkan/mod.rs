@@ -30,6 +30,16 @@ enum Value {
     U32(u32),
 }
 
+type AvailableImages = HashMap<
+    String,
+    Vec<(
+        Rc<ImageView>,
+        Rc<Sampler>,
+        Box<[vk::DescriptorImageInfo; 1]>,
+    )>,
+>;
+type AvailableBuffers = HashMap<String, Vec<(Rc<Buffer>, Box<[vk::DescriptorBufferInfo; 1]>)>>;
+
 struct ShaderResources {
     // Pipelines.
     pipeline: Rc<Pipeline>,
@@ -67,12 +77,42 @@ impl ShaderResources {
             pipeline,
         })
     }
+
+    fn invalidate_association_cache(&mut self) {
+        if !self.descriptors.is_empty() {
+            debug!(
+                "Invalidating image and buffer binding cache for shader {:?}",
+                self.shader_module.source_path
+            );
+            for descriptor in self.descriptors.iter_mut() {
+                descriptor.instances.clear();
+            }
+        }
+    }
+
+    /// Collect, and, if missing, associate the available buffers with this shader.
+    fn get_write_descriptor_set(
+        &mut self,
+        available_images: &AvailableImages,
+        available_buffers: &AvailableBuffers,
+        present_name: &str,
+        present_index: usize,
+        frame_index: usize,
+    ) -> Result<Vec<vk::WriteDescriptorSet>, Error> {
+        self.descriptors.get_write_descriptor_set(
+            available_images,
+            available_buffers,
+            present_name,
+            present_index,
+            frame_index,
+        )
+    }
 }
 
 // Define fields in reverse drop order.
 pub struct Vulkan {
     // Other.
-    pub num_frames: u32,
+    pub num_frames: usize,
 
     image_acquired_semaphore: Rc<Semaphore>,
     compute_complete_semaphore: Rc<Semaphore>,
@@ -87,6 +127,10 @@ pub struct Vulkan {
     swapchain_images: Vec<Rc<Image>>,
     swapchain: Option<Rc<Swapchain>>,
     swapchain_loader: Rc<SwapchainLoader>,
+
+    // Resources.
+    available_buffers: AvailableBuffers,
+    available_images: AvailableImages,
 
     // Staleness markers.
     stale_images: Vec<(Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
@@ -145,6 +189,10 @@ impl Vulkan {
             let stale_swapchain = true;
             let stale_images = Vec::new();
 
+            // Resources.
+            let available_images = HashMap::new();
+            let available_buffers = HashMap::new();
+
             // Swapchain.
             let swapchain_loader = SwapchainLoader::new(&instance, &device)?;
             let swapchain = None;
@@ -178,6 +226,8 @@ impl Vulkan {
                 sampler,
                 stale_swapchain,
                 stale_images,
+                available_images,
+                available_buffers,
                 swapchain_loader,
                 swapchain,
                 swapchain_images,
@@ -189,6 +239,12 @@ impl Vulkan {
                 compute_complete_semaphore,
                 num_frames: 0,
             })
+        }
+    }
+
+    fn invalidate_shader_association_cache(&mut self) {
+        for resources in &mut self.shader_resources {
+            resources.invalidate_association_cache();
         }
     }
 
@@ -217,16 +273,41 @@ impl Vulkan {
         Ok(())
     }
 
-    fn link_image(&mut self, name: &str, views_and_samplers: &[(Rc<ImageView>, Rc<Sampler>)]) {
-        for resources in &mut self.shader_resources {
-            resources.descriptors.link_image(name, views_and_samplers);
-        }
+    fn register_image(&mut self, name: &str, views_and_samplers: &[(Rc<ImageView>, Rc<Sampler>)]) {
+        let instances = views_and_samplers
+            .iter()
+            .map(|(image_view, sampler)| {
+                (
+                    image_view.clone(),
+                    sampler.clone(),
+                    Box::new([vk::DescriptorImageInfo::builder()
+                        .image_view(***image_view)
+                        .sampler(***sampler)
+                        .image_layout(vk::ImageLayout::GENERAL)
+                        .build()]),
+                )
+            })
+            .collect();
+        self.available_images.insert(name.to_owned(), instances);
+        self.invalidate_shader_association_cache();
     }
 
-    fn link_buffer(&mut self, name: &str, buffers: &[Rc<Buffer>]) {
-        for resources in &mut self.shader_resources {
-            resources.descriptors.link_buffer(name, buffers);
-        }
+    fn register_buffer(&mut self, name: &str, buffers: &[Rc<Buffer>]) {
+        let instances = buffers
+            .iter()
+            .map(|buffer| {
+                (
+                    buffer.clone(),
+                    Box::new([vk::DescriptorBufferInfo::builder()
+                        .buffer(***buffer)
+                        .offset(0)
+                        .range(buffer.size)
+                        .build()]),
+                )
+            })
+            .collect();
+        self.available_buffers.insert(name.to_owned(), instances);
+        self.invalidate_shader_association_cache();
     }
 
     pub unsafe fn reinitialize_swapchain_if_needed(&mut self) -> Result<bool, Error> {
@@ -279,7 +360,7 @@ impl Vulkan {
             .collect::<Vec<_>>();
 
         let present_name = self.present_name.to_owned();
-        self.link_image(&present_name, &views_and_samplers);
+        self.register_image(&present_name, &views_and_samplers);
 
         Ok(true)
     }
@@ -396,7 +477,7 @@ impl Vulkan {
         if let Some(declaration) = shader_module.push_constants_declaration() {
             // Prepare available fields.
             let mut avail_fields = HashMap::new();
-            avail_fields.insert("frame_index".to_owned(), Value::U32(self.num_frames));
+            avail_fields.insert("frame_index".to_owned(), Value::U32(self.num_frames as u32));
 
             // Allocate constants memory.
             let constants_size = declaration.byte_size().unwrap() as usize;
@@ -436,27 +517,14 @@ impl Vulkan {
     unsafe fn push_descriptors(
         &self,
         pipeline_layout: &PipelineLayout,
-        descriptors: &Descriptors,
-        present_index: usize,
+        write_descriptor_set: &[vk::WriteDescriptorSet],
     ) {
-        let write_descriptor_set = descriptors
-            .iter()
-            .map(|descriptor| {
-                let instance_index = if descriptor.name == self.present_name {
-                    present_index
-                } else {
-                    // TODOOOOO
-                    self.num_frames as usize % descriptor.instances.len()
-                };
-                descriptor.instances[instance_index].write_info
-            })
-            .collect::<Vec<_>>();
         self.push_descriptor.cmd_push_descriptor_set(
             **self.command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             **pipeline_layout,
             0,
-            &write_descriptor_set,
+            write_descriptor_set,
         );
     }
 
@@ -507,14 +575,19 @@ impl Vulkan {
             vk::ImageLayout::GENERAL,
         );
 
-        for resources in self.shader_resources.iter() {
+        for index in 0..self.shader_resources.len() {
+            let write_descriptor_set = self.shader_resources[index].get_write_descriptor_set(
+                &self.available_images,
+                &self.available_buffers,
+                &self.present_name,
+                present_index,
+                self.num_frames,
+            )?;
+            let resources = &self.shader_resources[index];
+
             self.bind_pipeline(&resources.pipeline);
             self.push_constants(&resources.pipeline_layout, &resources.shader_module);
-            self.push_descriptors(
-                &resources.pipeline_layout,
-                &resources.descriptors,
-                present_index,
-            );
+            self.push_descriptors(&resources.pipeline_layout, &write_descriptor_set);
             self.dispatch(&resources.shader_module);
         }
 

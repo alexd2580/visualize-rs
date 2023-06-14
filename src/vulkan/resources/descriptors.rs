@@ -1,16 +1,15 @@
-use std::{
-    fmt,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::ops::{Deref, DerefMut};
 
-use log::{debug, warn};
+use log::debug;
 
 use ash::vk;
 
-use crate::error::Error;
+use crate::{
+    error::Error,
+    vulkan::{AvailableBuffers, AvailableImages},
+};
 
-use super::{buffer::Buffer, image_view::ImageView, sampler::Sampler, shader_module::ShaderModule};
+use super::shader_module::ShaderModule;
 
 fn write_descriptor_set_builder_stub(
     descriptor_binding: u32,
@@ -20,42 +19,6 @@ fn write_descriptor_set_builder_stub(
         .descriptor_type(storage_type)
         .dst_binding(descriptor_binding)
         .dst_array_element(0)
-}
-
-/// The info object needs to be boxed so that `vk::WriteDescriptorSet`
-/// can reference that memory via pointer.
-type DescriptorBindingImageData = (
-    Rc<ImageView>,
-    Rc<Sampler>,
-    Box<[vk::DescriptorImageInfo; 1]>,
-);
-
-/// The info object needs to be boxed so that `vk::WriteDescriptorSet`
-/// can reference that memory via pointer.
-type DescriptorBindingBufferData = (Rc<Buffer>, Box<[vk::DescriptorBufferInfo; 1]>);
-
-/// Images and buffers have different bind data.
-enum DescriptorBindingData {
-    Image(DescriptorBindingImageData),
-    Buffer(DescriptorBindingBufferData),
-}
-
-impl fmt::Debug for DescriptorBindingData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "DescriptorBindingData::")?;
-        match self {
-            DescriptorBindingData::Image(..) => write!(f, "Image(..)"),
-            DescriptorBindingData::Buffer(..) => write!(f, "Buffer(..)"),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct DescriptorBindingInstance {
-    #[allow(dead_code)]
-    data: DescriptorBindingData,
-    /// A cached version of `vk::WriteDescriptorSet`. Can be used with
-    pub write_info: vk::WriteDescriptorSet,
 }
 
 #[derive(Debug)]
@@ -70,7 +33,7 @@ pub struct DescriptorBinding {
     storage_type: vk::DescriptorType,
 
     /// Instances, actual data, to be bound. Created and linked in application code.
-    pub instances: Vec<DescriptorBindingInstance>,
+    pub instances: Vec<vk::WriteDescriptorSet>,
 }
 
 impl DescriptorBinding {
@@ -82,6 +45,64 @@ impl DescriptorBinding {
             stage_flags: vk::ShaderStageFlags::COMPUTE,
             ..Default::default()
         }
+    }
+
+    fn get_write_descriptor_set_entry(
+        &mut self,
+        available_images: &AvailableImages,
+        available_buffers: &AvailableBuffers,
+        present_name: &str,
+        present_index: usize,
+        frame_index: usize,
+    ) -> Result<vk::WriteDescriptorSet, Error> {
+        if self.instances.is_empty() {
+            debug!(
+                "Associating buffers for binding {}: {}",
+                self.binding, self.name
+            );
+
+            // TODO check storage type.
+
+            self.instances = available_images
+                .get(&self.name)
+                .map(|images| {
+                    images
+                        .iter()
+                        .map(|(_, _, image_info)| {
+                            write_descriptor_set_builder_stub(self.binding, self.storage_type)
+                                .image_info(image_info.as_ref())
+                                .build()
+                        })
+                        .collect()
+                })
+                .or_else(|| {
+                    available_buffers.get(&self.name).map(|buffers| {
+                        buffers
+                            .iter()
+                            .map(|(_, buffer_info)| {
+                                write_descriptor_set_builder_stub(self.binding, self.storage_type)
+                                    .buffer_info(buffer_info.as_ref())
+                                    .build()
+                            })
+                            .collect()
+                    })
+                })
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    let msg = format!(
+                        "Associating buffers for binding {}: {}",
+                        self.binding, self.name
+                    );
+                    Err(Error::Local(msg))
+                })?;
+        }
+
+        let instance_index = if self.name == present_name {
+            present_index
+        } else {
+            frame_index % self.instances.len()
+        };
+        Ok(self.instances[instance_index])
     }
 }
 
@@ -135,89 +156,24 @@ impl Descriptors {
         Ok(Descriptors(vars.chain(blocks).collect()))
     }
 
-    pub fn link_image(&mut self, name: &str, images: &[(Rc<ImageView>, Rc<Sampler>)]) {
-        fn make_descriptor_binding_image_data(
-            (image_view, sampler): &(Rc<ImageView>, Rc<Sampler>),
-        ) -> DescriptorBindingImageData {
-            (
-                image_view.clone(),
-                sampler.clone(),
-                Box::new([vk::DescriptorImageInfo::builder()
-                    .image_view(***image_view)
-                    .sampler(***sampler)
-                    .image_layout(vk::ImageLayout::GENERAL)
-                    .build()]),
-            )
-        }
-
+    pub fn get_write_descriptor_set(
+        &mut self,
+        available_images: &AvailableImages,
+        available_buffers: &AvailableBuffers,
+        present_name: &str,
+        present_index: usize,
+        frame_index: usize,
+    ) -> Result<Vec<vk::WriteDescriptorSet>, Error> {
         self.iter_mut()
-            .filter(|binding| binding.name == name)
-            .for_each(|binding| {
-                if !binding.instances.is_empty() {
-                    warn!("Rebinding {name}");
-                    binding.instances.clear();
-                }
-
-                // TODO check storage type.
-
-                let make_descriptor_binding_instance = |image_data: DescriptorBindingImageData| {
-                    let write_info =
-                        write_descriptor_set_builder_stub(binding.binding, binding.storage_type)
-                            .image_info(image_data.2.as_ref())
-                            .build();
-                    let data = DescriptorBindingData::Image(image_data);
-
-                    DescriptorBindingInstance { data, write_info }
-                };
-                binding.instances.extend(
-                    images
-                        .iter()
-                        .map(make_descriptor_binding_image_data)
-                        .map(make_descriptor_binding_instance),
-                );
-            });
-    }
-
-    pub fn link_buffer(&mut self, name: &str, buffers: &[Rc<Buffer>]) {
-        fn make_descriptor_binding_buffer_data(buffer: &Rc<Buffer>) -> DescriptorBindingBufferData {
-            (
-                buffer.clone(),
-                Box::new([vk::DescriptorBufferInfo::builder()
-                    .buffer(***buffer)
-                    .offset(0)
-                    .range(buffer.size)
-                    .build()]),
-            )
-        }
-
-        self.iter_mut()
-            .filter(|binding| binding.name == name)
-            .for_each(|binding| {
-                if !binding.instances.is_empty() {
-                    warn!("Rebinding {name}");
-                    binding.instances.clear();
-                }
-
-                // TODO check storage type.
-
-                let make_descriptor_binding_instance =
-                    |buffer_data: DescriptorBindingBufferData| {
-                        let write_info = write_descriptor_set_builder_stub(
-                            binding.binding,
-                            binding.storage_type,
-                        )
-                        .buffer_info(buffer_data.1.as_ref())
-                        .build();
-                        let data = DescriptorBindingData::Buffer(buffer_data);
-
-                        DescriptorBindingInstance { data, write_info }
-                    };
-                binding.instances.extend(
-                    buffers
-                        .iter()
-                        .map(make_descriptor_binding_buffer_data)
-                        .map(make_descriptor_binding_instance),
-                );
-            });
+            .map(|descriptor| {
+                descriptor.get_write_descriptor_set_entry(
+                    available_images,
+                    available_buffers,
+                    present_name,
+                    present_index,
+                    frame_index,
+                )
+            })
+            .collect()
     }
 }

@@ -27,9 +27,9 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 - [x] ~Separate descriptor sets per shader~
 - [x] VK_KHR_push_descriptor
 - [ ] ~Fix descriptor set allocation and binding~
-- [ ] Exponentialize dft index on CPU side once?
-- [ ] Repopulate descriptors cache on shader rebuild, separate it as from `Descriptors`?
+- [x] Repopulate descriptors cache on shader rebuild, separate it as from `Descriptors`?
 - [ ] Resize client images on resize. Static vs dynamic? Vulkan managed?
+- [ ] Exponentialize dft index on CPU side once?
 - [ ] Bind images in different binding modes, e.g. sampler vs storage_image
 - [ ] Improve sequence of vulkan high-level operations: swapchain reinit, image reinit, etc...
 - [ ] Run the app even without pipeline etc, when no shaders are working from the get-go.
