@@ -6,41 +6,41 @@ layout(push_constant, std140) uniform PushConstants {
     layout(offset = 0) uint frame_index;
 } constants;
 
-layout(set=0, binding = 0) buffer Signal {
+layout(binding = 0) buffer Signal {
     int size;
     int position;
     float data[];
 } signal;
 
-layout(set=0, binding = 1) buffer LowPass {
+layout(binding = 1) buffer LowPass {
     int size;
     int position;
     float data[];
 } low_pass;
 
-layout(set=0, binding = 2) buffer HighPass {
+layout(binding = 2) buffer HighPass {
     int size;
     int position;
     float data[];
 } high_pass;
 
-layout(set=0, binding = 3) buffer Dft {
+layout(binding = 3) buffer Dft {
     int size;
     float data[];
 } signal_dft;
 
-layout(set=0, binding = 4) buffer DftLowPass {
+layout(binding = 4) buffer DftLowPass {
     int size;
     float data[];
 } low_pass_dft;
 
-layout(set=0, binding = 5) buffer DftHighPass {
+layout(binding = 5) buffer DftHighPass {
     int size;
     float data[];
 } high_pass_dft;
 
-layout(rgba32f, set=0, binding = 6) uniform image2D intermediate;
-layout(rgba32f, set=0, binding = 7) uniform image2D highlights;
+layout(rgba32f, binding = 6) uniform image2D intermediate;
+layout(rgba32f, binding = 7) uniform image2D highlights;
 
 const float eps = 0.002;
 

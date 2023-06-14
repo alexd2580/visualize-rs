@@ -90,10 +90,13 @@ impl Drop for MultiImage {
 }
 
 impl Vulkan {
-    pub fn new_multi_image(&mut self, name: &str) -> Result<Rc<MultiImage>, Error> {
-        // TODO num buffers? What does this mean? ?????????
-        let num_images = self.surface_info.desired_image_count as usize;
+    pub fn new_multi_image(
+        &mut self,
+        name: &str,
+        num_images: Option<usize>,
+    ) -> Result<Rc<MultiImage>, Error> {
         unsafe {
+            let num_images = num_images.unwrap_or(self.surface_info.desired_image_count as usize);
             let image = MultiImage::new(
                 &self.physical_device,
                 &self.device,
@@ -113,9 +116,8 @@ impl Vulkan {
             let views_and_samplers = image
                 .iter()
                 .map(|unit| (unit.view.clone(), self.sampler.clone()))
-                .collect();
-            self.image_binding_updates
-                .push((name.to_owned(), views_and_samplers));
+                .collect::<Vec<_>>();
+            self.link_image(name, &views_and_samplers);
 
             Ok(image)
         }

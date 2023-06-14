@@ -43,12 +43,11 @@ fn run_dft(
     buffer: &ring_buffer::RingBuffer<f32>,
     dft: &mut dft::Dft,
     dft_gpu: &vulkan::multi_buffer::MultiBuffer,
-    vulkan: &vulkan::Vulkan,
 ) {
     buffer.write_to_buffer(dft.get_input_vec());
     dft.apply_hamming();
     dft.run_transform();
-    dft.write_to_pointer(dft_gpu.mapped(vulkan.binding_index));
+    dft.write_to_pointer(dft_gpu.mapped(0));
 }
 
 impl window::App for App {
@@ -63,44 +62,25 @@ impl window::App for App {
 
         let target = self.signal_gpu.mapped(0);
         self.audio.left.write_to_pointer(read_index, target);
-        let target = self.signal_gpu.mapped(1);
-        self.audio.left.write_to_pointer(read_index, target);
-        let target = self.signal_gpu.mapped(2);
-        self.audio.left.write_to_pointer(read_index, target);
 
         let target = self.low_pass_gpu.mapped(0);
-        self.low_pass.write_to_pointer(read_index, target);
-        let target = self.low_pass_gpu.mapped(1);
-        self.low_pass.write_to_pointer(read_index, target);
-        let target = self.low_pass_gpu.mapped(2);
         self.low_pass.write_to_pointer(read_index, target);
 
         let target = self.high_pass_gpu.mapped(0);
         self.high_pass.write_to_pointer(read_index, target);
-        let target = self.high_pass_gpu.mapped(1);
-        self.high_pass.write_to_pointer(read_index, target);
-        let target = self.high_pass_gpu.mapped(2);
-        self.high_pass.write_to_pointer(read_index, target);
 
-        run_dft(
-            &self.audio.left,
-            &mut self.signal_dft,
-            &self.signal_dft_gpu,
-            &self.vulkan,
-        );
+        run_dft(&self.audio.left, &mut self.signal_dft, &self.signal_dft_gpu);
 
         run_dft(
             &self.low_pass,
             &mut self.low_pass_dft,
             &self.low_pass_dft_gpu,
-            &self.vulkan,
         );
 
         run_dft(
             &self.high_pass,
             &mut self.high_pass_dft,
             &self.high_pass_dft_gpu,
-            &self.vulkan,
         );
 
         self.vulkan.run_frame()
@@ -144,23 +124,23 @@ fn run_main() -> Result<(), Error> {
     let mut window = window::Window::new(1280, 1024)?;
     let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths)?;
 
-    let intermediate = vulkan.new_multi_image("intermediate")?;
-    let highlights = vulkan.new_multi_image("highlights")?;
-    let bloom_h = vulkan.new_multi_image("bloom_h")?;
-    let bloom_hv = vulkan.new_multi_image("bloom_hv")?;
+    let intermediate = vulkan.new_multi_image("intermediate", None)?;
+    let highlights = vulkan.new_multi_image("highlights", None)?;
+    let bloom_h = vulkan.new_multi_image("bloom_h", None)?;
+    let bloom_hv = vulkan.new_multi_image("bloom_hv", None)?;
 
     let sample_rate = 44100;
     let audio_buffer_size = sample_rate * args.audio_buffer_sec;
     let audio_buffer_bytes = (audio_buffer_size * mem::size_of::<f32>()) as u64;
 
     let audio = audio::Audio::new(audio_buffer_size)?;
-    let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes)?;
+    let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
 
     let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.02);
-    let low_pass_gpu = vulkan.new_multi_buffer("low_pass", audio_buffer_bytes)?;
+    let low_pass_gpu = vulkan.new_multi_buffer("low_pass", audio_buffer_bytes, Some(1))?;
 
     let high_pass = audio::high_pass::HighPass::new(audio_buffer_size, 0.1);
-    let high_pass_gpu = vulkan.new_multi_buffer("high_pass", audio_buffer_bytes)?;
+    let high_pass_gpu = vulkan.new_multi_buffer("high_pass", audio_buffer_bytes, Some(1))?;
 
     let dft_size = args.dft_size as f32;
     let dft_window_per_s = audio.sample_rate as f32 / dft_size;
@@ -171,13 +151,13 @@ fn run_main() -> Result<(), Error> {
     let dft_result_size = dft::Dft::output_byte_size(args.dft_size) as u64;
 
     let signal_dft = dft::Dft::new(args.dft_size);
-    let signal_dft_gpu = vulkan.new_multi_buffer("signal_dft", dft_result_size)?;
+    let signal_dft_gpu = vulkan.new_multi_buffer("signal_dft", dft_result_size, Some(1))?;
 
     let low_pass_dft = dft::Dft::new(args.dft_size);
-    let low_pass_dft_gpu = vulkan.new_multi_buffer("low_pass_dft", dft_result_size)?;
+    let low_pass_dft_gpu = vulkan.new_multi_buffer("low_pass_dft", dft_result_size, Some(1))?;
 
     let high_pass_dft = dft::Dft::new(args.dft_size);
-    let high_pass_dft_gpu = vulkan.new_multi_buffer("high_pass_dft", dft_result_size)?;
+    let high_pass_dft_gpu = vulkan.new_multi_buffer("high_pass_dft", dft_result_size, Some(1))?;
 
     log::info!("Running...");
     {

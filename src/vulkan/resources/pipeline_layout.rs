@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::error::Error;
 
-use super::{descriptor_layouts::DescriptorLayouts, device::Device, shader_module::ShaderModule};
+use super::{descriptor_layout::DescriptorLayout, device::Device, shader_module::ShaderModule};
 
 pub struct PipelineLayout {
     device: Rc<Device>,
@@ -25,7 +25,7 @@ impl PipelineLayout {
     pub unsafe fn new(
         device: &Rc<Device>,
         shader_module: &ShaderModule,
-        descriptor_layouts: &DescriptorLayouts,
+        descriptor_layout: &DescriptorLayout,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating pipeline layout");
         let device = device.clone();
@@ -51,9 +51,10 @@ impl PipelineLayout {
             );
         }
 
+        let layouts = [**descriptor_layout];
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constant_ranges)
-            .set_layouts(&descriptor_layouts);
+            .set_layouts(&layouts);
         let pipeline_layout = device.create_pipeline_layout(&layout_create_info, None)?;
 
         Ok(Rc::new(PipelineLayout {

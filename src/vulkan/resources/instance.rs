@@ -25,6 +25,8 @@ impl Instance {
     pub unsafe fn new(window: &Window, entry: &Entry) -> Result<Rc<Self>, Error> {
         debug!("Creating instance");
         let app_info = vk::ApplicationInfo::builder().api_version(vk::make_api_version(0, 1, 3, 0));
+
+        // Instance extensions.
         let extension_names = window.enumerate_required_extensions()?;
         for e in &extension_names {
             debug!("Enabled instance extension {:?}", CStr::from_ptr(*e));
@@ -46,7 +48,6 @@ impl Instance {
             .enabled_layer_names(&layer_names);
 
         let instance = entry.create_instance(&create_info, None)?;
-
         Ok(Rc::new(Instance { instance }))
     }
 }

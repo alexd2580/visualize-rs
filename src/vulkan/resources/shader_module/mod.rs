@@ -163,21 +163,6 @@ impl ShaderModule {
                 .any(|qualifier| qualifier == "push_constant")
         })
     }
-
-    pub fn variable_declaration(&self, name: &str) -> Option<&analysis::VariableDeclaration> {
-        self.variable_declarations
-            .iter()
-            .find(|declaration| declaration.name == name)
-    }
-
-    pub fn block_declaration(&self, name: &str) -> Option<&analysis::BlockDeclaration> {
-        self.block_declarations.iter().find(|declaration| {
-            declaration
-                .identifier
-                .as_ref()
-                .is_some_and(|val| val == name)
-        })
-    }
 }
 
 impl Drop for ShaderModule {

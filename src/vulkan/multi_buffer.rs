@@ -86,13 +86,16 @@ impl Vulkan {
         &mut self,
         name: &str,
         size: vk::DeviceSize,
+        num_buffers: Option<usize>,
     ) -> Result<Rc<MultiBuffer>, Error> {
-        let num_buffers = self.surface_info.desired_image_count as usize;
-        // TODO num buffers? What does this mean?
         unsafe {
+            let num_buffers = num_buffers.unwrap_or(self.surface_info.desired_image_count as usize);
             let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
-            let buffers = buffer.iter().map(|unit| unit.buffer.clone()).collect();
-            self.buffer_binding_updates.push((name.to_owned(), buffers));
+            let buffers = buffer
+                .iter()
+                .map(|unit| unit.buffer.clone())
+                .collect::<Vec<_>>();
+            self.link_buffer(name, &buffers);
             Ok(buffer)
         }
     }

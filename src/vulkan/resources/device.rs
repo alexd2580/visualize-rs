@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc};
+use std::{ffi::CStr, ops::Deref, rc::Rc};
 
 use log::debug;
 
@@ -33,7 +33,14 @@ impl Device {
             .build();
 
         let create_infos = &[compute_queue_create_info];
-        let device_extension_names_raw = [extensions::khr::Swapchain::name().as_ptr()];
+
+        let swapchain_extension = extensions::khr::Swapchain::name();
+        let push_constant_extension =
+            CStr::from_bytes_with_nul_unchecked(b"VK_KHR_push_descriptor\0");
+        let device_extension_names_raw = [
+            swapchain_extension.as_ptr(),
+            push_constant_extension.as_ptr(),
+        ];
         let features = vk::PhysicalDeviceFeatures::default();
 
         let device_create_info = vk::DeviceCreateInfo::builder()

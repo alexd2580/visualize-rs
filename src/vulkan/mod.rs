@@ -1,6 +1,6 @@
 use std::{collections::HashMap, mem, ops::Deref, path::Path, rc::Rc};
 
-use ash::vk;
+use ash::{extensions::khr::PushDescriptor, vk};
 use filetime::FileTime;
 use log::{debug, error, info, warn};
 use winit::event_loop::ControlFlow;
@@ -11,25 +11,20 @@ use crate::{
     window::{App, Window},
 };
 
-mod flush_binding_updates;
 pub mod multi_buffer;
 pub mod multi_image;
 pub mod resources;
 
 use self::resources::{
     buffer::Buffer, command_buffer::CommandBuffer, command_pool::CommandPool,
-    compute_queue::ComputeQueue, descriptor_bindings::DescriptorBindings,
-    descriptor_layouts::DescriptorLayouts, descriptor_pool::DescriptorPool,
-    descriptor_sets::DescriptorSets, device::Device, entry::Entry, fence::Fence, image::Image,
+    compute_queue::ComputeQueue, descriptor_layout::DescriptorLayout, descriptors::Descriptors,
+    device::Device, entry::Entry, fence::Fence, image::Image,
     image_subresource_range::ImageSubresourceRange, image_view::ImageView, instance::Instance,
     physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
     sampler::Sampler, semaphore::Semaphore, shader_module::ShaderModule, surface::Surface,
     surface_info::SurfaceInfo, surface_loader::SurfaceLoader, swapchain::Swapchain,
     swapchain_loader::SwapchainLoader,
 };
-
-type ImageBindingUpdate = (String, Vec<(Rc<ImageView>, Rc<Sampler>)>);
-type BufferBindingUpdate = (String, Vec<Rc<Buffer>>);
 
 enum Value {
     U32(u32),
@@ -41,58 +36,33 @@ struct ShaderResources {
     pipeline_layout: Rc<PipelineLayout>,
 
     // Descriptors.
-    descriptor_sets: Rc<DescriptorSets>,
-    descriptor_pool: Rc<DescriptorPool>,
-    descriptor_layouts: Rc<DescriptorLayouts>,
-    descriptor_bindings: Rc<DescriptorBindings>,
+    _descriptor_layout: Rc<DescriptorLayout>,
+    descriptors: Descriptors,
 
     // Compute shader.
-    present_set_index: Option<usize>,
     shader_module: Rc<ShaderModule>,
     shader_module_mtime: FileTime,
 }
 
 impl ShaderResources {
-    pub unsafe fn new(
-        device: &Rc<Device>,
-        surface_info: &SurfaceInfo,
-        present_name: &str,
-        shader_path: &Path,
-    ) -> Result<Self, Error> {
+    pub unsafe fn new(device: &Rc<Device>, shader_path: &Path) -> Result<Self, Error> {
         // Compute shader.
         let shader_module_mtime = mtime(shader_path)?;
-        let shader_module = ShaderModule::new(&device, shader_path)?;
-        let present_set_index = shader_module
-            .variable_declaration(present_name)
-            .and_then(|declaration| declaration.set);
+        let shader_module = ShaderModule::new(device, shader_path)?;
 
         // Descriptors.
-        let descriptor_bindings = DescriptorBindings::new(&shader_module)?;
-        let descriptor_layouts = DescriptorLayouts::new(&device, &descriptor_bindings)?;
-        let descriptor_pool = DescriptorPool::new(
-            &device,
-            &descriptor_bindings,
-            surface_info.desired_image_count,
-        )?;
-        let descriptor_sets = DescriptorSets::new(
-            &device,
-            &descriptor_layouts,
-            &descriptor_pool,
-            surface_info.desired_image_count,
-        )?;
+        let descriptors = Descriptors::new(&shader_module)?;
+        let descriptor_layout = DescriptorLayout::new(device, &descriptors)?;
 
         // Pipelines.
-        let pipeline_layout = PipelineLayout::new(&device, &shader_module, &descriptor_layouts)?;
-        let pipeline = Pipeline::new(&device, &shader_module, &pipeline_layout)?;
+        let pipeline_layout = PipelineLayout::new(device, &shader_module, &descriptor_layout)?;
+        let pipeline = Pipeline::new(device, &shader_module, &pipeline_layout)?;
 
         Ok(ShaderResources {
             shader_module_mtime,
             shader_module,
-            present_set_index,
-            descriptor_bindings,
-            descriptor_layouts,
-            descriptor_pool,
-            descriptor_sets,
+            descriptors,
+            _descriptor_layout: descriptor_layout,
             pipeline_layout,
             pipeline,
         })
@@ -103,7 +73,6 @@ impl ShaderResources {
 pub struct Vulkan {
     // Other.
     pub num_frames: u32,
-    pub binding_index: usize,
 
     image_acquired_semaphore: Rc<Semaphore>,
     compute_complete_semaphore: Rc<Semaphore>,
@@ -120,8 +89,6 @@ pub struct Vulkan {
     swapchain_loader: Rc<SwapchainLoader>,
 
     // Staleness markers.
-    image_binding_updates: Vec<ImageBindingUpdate>,
-    buffer_binding_updates: Vec<BufferBindingUpdate>,
     stale_images: Vec<(Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
     stale_swapchain: bool,
 
@@ -132,6 +99,7 @@ pub struct Vulkan {
     window_size: (u32, u32),
 
     // Device.
+    push_descriptor: PushDescriptor,
     command_buffer: Rc<CommandBuffer>,
     _command_pool: Rc<CommandPool>,
     compute_queue: Rc<ComputeQueue>,
@@ -164,6 +132,7 @@ impl Vulkan {
             let compute_queue = ComputeQueue::new(&physical_device, &device)?;
             let command_pool = CommandPool::new(&physical_device, &device)?;
             let command_buffer = CommandBuffer::new(&device, &command_pool)?;
+            let push_descriptor = PushDescriptor::new(&instance, &device);
 
             // Image data.
             let window_size = (window.width, window.height);
@@ -175,8 +144,6 @@ impl Vulkan {
             // Staleness markers.
             let stale_swapchain = true;
             let stale_images = Vec::new();
-            let buffer_binding_updates = Vec::new();
-            let image_binding_updates = Vec::new();
 
             // Swapchain.
             let swapchain_loader = SwapchainLoader::new(&instance, &device)?;
@@ -187,7 +154,7 @@ impl Vulkan {
 
             let shader_resources = compute_shader_paths
                 .iter()
-                .map(|path| ShaderResources::new(&device, &surface_info, &present_name, path))
+                .map(|path| ShaderResources::new(&device, path))
                 .collect::<Result<_, Error>>()?;
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
@@ -204,14 +171,13 @@ impl Vulkan {
                 compute_queue,
                 _command_pool: command_pool,
                 command_buffer,
+                push_descriptor,
                 window_size,
                 surface_info,
                 image_subresource_range,
                 sampler,
                 stale_swapchain,
                 stale_images,
-                buffer_binding_updates,
-                image_binding_updates,
                 swapchain_loader,
                 swapchain,
                 swapchain_images,
@@ -221,7 +187,6 @@ impl Vulkan {
                 reuse_command_buffer_fence,
                 image_acquired_semaphore,
                 compute_complete_semaphore,
-                binding_index: 0,
                 num_frames: 0,
             })
         }
@@ -241,12 +206,7 @@ impl Vulkan {
                 info!("Recompiling {path:?}...");
                 self.wait_idle();
 
-                let new_resources = ShaderResources::new(
-                    &self.device,
-                    &self.surface_info,
-                    &self.present_name,
-                    &path,
-                );
+                let new_resources = ShaderResources::new(&self.device, path);
 
                 match new_resources {
                     Ok(new_resources) => self.shader_resources[index] = new_resources,
@@ -255,6 +215,18 @@ impl Vulkan {
             }
         }
         Ok(())
+    }
+
+    fn link_image(&mut self, name: &str, views_and_samplers: &[(Rc<ImageView>, Rc<Sampler>)]) {
+        for resources in &mut self.shader_resources {
+            resources.descriptors.link_image(name, views_and_samplers);
+        }
+    }
+
+    fn link_buffer(&mut self, name: &str, buffers: &[Rc<Buffer>]) {
+        for resources in &mut self.shader_resources {
+            resources.descriptors.link_buffer(name, buffers);
+        }
     }
 
     pub unsafe fn reinitialize_swapchain_if_needed(&mut self) -> Result<bool, Error> {
@@ -304,9 +276,10 @@ impl Vulkan {
             .swapchain_image_views
             .iter()
             .map(|image_view| (image_view.clone(), self.sampler.clone()))
-            .collect();
-        self.image_binding_updates
-            .push((self.present_name.clone(), views_and_samplers));
+            .collect::<Vec<_>>();
+
+        let present_name = self.present_name.to_owned();
+        self.link_image(&present_name, &views_and_samplers);
 
         Ok(true)
     }
@@ -460,33 +433,30 @@ impl Vulkan {
         }
     }
 
-    unsafe fn bind_descriptor_set(
+    unsafe fn push_descriptors(
         &self,
         pipeline_layout: &PipelineLayout,
-        present_set_index: Option<usize>,
-        present_instance_index: usize,
-        descriptor_sets: &DescriptorSets,
+        descriptors: &Descriptors,
+        present_index: usize,
     ) {
-        let descriptor_sets = descriptor_sets
+        let write_descriptor_set = descriptors
             .iter()
-            .enumerate()
-            .map(|(set_index, descriptor_set)| {
-                let instance_index = if Some(set_index) == present_set_index {
-                    present_instance_index
+            .map(|descriptor| {
+                let instance_index = if descriptor.name == self.present_name {
+                    present_index
                 } else {
-                    self.num_frames as usize % descriptor_set.len()
+                    // TODOOOOO
+                    self.num_frames as usize % descriptor.instances.len()
                 };
-                descriptor_set[instance_index]
+                descriptor.instances[instance_index].write_info
             })
             .collect::<Vec<_>>();
-
-        self.device.cmd_bind_descriptor_sets(
+        self.push_descriptor.cmd_push_descriptor_set(
             **self.command_buffer,
             vk::PipelineBindPoint::COMPUTE,
             **pipeline_layout,
             0,
-            &descriptor_sets,
-            &[],
+            &write_descriptor_set,
         );
     }
 
@@ -538,14 +508,13 @@ impl Vulkan {
         );
 
         for resources in self.shader_resources.iter() {
-            self.push_constants(&resources.pipeline_layout, &resources.shader_module);
-            self.bind_descriptor_set(
-                &resources.pipeline_layout,
-                resources.present_set_index,
-                present_index,
-                &resources.descriptor_sets,
-            );
             self.bind_pipeline(&resources.pipeline);
+            self.push_constants(&resources.pipeline_layout, &resources.shader_module);
+            self.push_descriptors(
+                &resources.pipeline_layout,
+                &resources.descriptors,
+                present_index,
+            );
             self.dispatch(&resources.shader_module);
         }
 
@@ -567,8 +536,6 @@ impl Vulkan {
         }
 
         self.num_frames += 1;
-        self.binding_index =
-            (self.binding_index + 1) % self.surface_info.desired_image_count as usize;
 
         Ok(())
     }
@@ -583,7 +550,6 @@ impl Vulkan {
 
     pub unsafe fn tick(&mut self) -> Result<(), Error> {
         self.transition_stale_images()?;
-        self.flush_binding_updates()?;
         self.recompile_shader_if_modified()?;
         if self.reinitialize_swapchain_if_needed()? {
             return Ok(());

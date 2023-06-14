@@ -394,13 +394,6 @@ impl BlockDeclaration {
             acc.and_then(|acc| item.byte_size().map(|item| acc + item))
         })
     }
-
-    pub fn checked_set(&self) -> usize {
-        self.set.unwrap_or_else(|| {
-            warn!("Assuming set=0 for block {}", self.name);
-            0
-        })
-    }
 }
 
 fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
