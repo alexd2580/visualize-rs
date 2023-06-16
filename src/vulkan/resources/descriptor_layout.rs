@@ -4,7 +4,7 @@ use log::debug;
 
 use ash::vk;
 
-use crate::error::Error;
+use crate::{error::Error, vulkan::resources::descriptors::DescriptorBinding};
 
 use super::{descriptors::Descriptors, device::Device};
 
@@ -28,7 +28,7 @@ impl DescriptorLayout {
         let device = device.clone();
         let bindings = descriptors
             .iter()
-            .map(|binding| binding.as_descriptor_set_layout_binding())
+            .map(DescriptorBinding::as_descriptor_set_layout_binding)
             .collect::<Vec<_>>();
         let descriptor_layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
             .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)

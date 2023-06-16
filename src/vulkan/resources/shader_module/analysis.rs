@@ -166,7 +166,7 @@ fn match_init_declarator_list(
                     match (name, maybe_value) {
                         // Currently we only expect int values for bindings.
                         ("binding", Some(&syntax::Expr::IntConst(value))) => {
-                            binding = Some(value as u32)
+                            binding = Some(value as u32);
                         }
                         ("rgba32f", None) => type_format = Some(name.to_owned()),
                         ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
@@ -451,7 +451,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                         ("binding", Some(&syntax::Expr::IntConst(value))) => {
                             binding = Some(value as u32);
                         }
-                        ("push_constant", None) | ("std140", None) => {
+                        ("push_constant" | "std140", None) => {
                             layout_qualifiers.push(name.to_owned());
                         }
                         ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),

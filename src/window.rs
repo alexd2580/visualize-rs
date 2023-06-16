@@ -92,7 +92,7 @@ impl Window {
 
     pub fn run_main_loop<T: App>(&mut self, app: &mut T) {
         self.event_loop.run_return(|event, &_, control_flow| {
-            *control_flow = Window::handle_event(&event, app)
+            *control_flow = Window::handle_event(&event, app);
         });
     }
 }

@@ -64,10 +64,8 @@ impl DescriptorBinding {
             );
 
             // TODO check storage type.
-
-            self.instances = available_images
-                .get(&self.name)
-                .map(|images| {
+            let search_in_images = || {
+                available_images.get(&self.name).map(|images| {
                     images
                         .iter()
                         .map(|(_, _, image_info)| {
@@ -77,22 +75,26 @@ impl DescriptorBinding {
                         })
                         .collect()
                 })
-                .or_else(|| {
-                    available_buffers.get(&self.name).map(|buffers| {
-                        buffers
-                            .iter()
-                            .map(|(_, buffer_info)| {
-                                write_descriptor_set_builder_stub(self.binding, self.storage_type)
-                                    .buffer_info(buffer_info.as_ref())
-                                    .build()
-                            })
-                            .collect()
-                    })
+            };
+
+            let search_in_buffers = || {
+                available_buffers.get(&self.name).map(|buffers| {
+                    buffers
+                        .iter()
+                        .map(|(_, buffer_info)| {
+                            write_descriptor_set_builder_stub(self.binding, self.storage_type)
+                                .buffer_info(buffer_info.as_ref())
+                                .build()
+                        })
+                        .collect()
                 })
-                .map(Ok)
-                .unwrap_or_else(|| {
+            };
+
+            self.instances = search_in_images()
+                .or_else(search_in_buffers)
+                .ok_or_else(|| {
                     let msg = format!("No buffer for binding {}: {}", self.binding, self.name);
-                    Err(Error::Local(msg))
+                    Error::Local(msg)
                 })?;
         }
 
@@ -125,7 +127,7 @@ impl DerefMut for Descriptors {
 }
 
 impl Descriptors {
-    pub fn new(shader_module: &ShaderModule) -> Result<Self, Error> {
+    pub fn new(shader_module: &ShaderModule) -> Self {
         debug!("Creating descriptor bindings");
 
         // TODO immutable samplers, what are immutable samplers???
@@ -135,7 +137,7 @@ impl Descriptors {
             .iter()
             .filter(|declaration| declaration.binding.is_some())
             .map(|declaration| DescriptorBinding {
-                name: declaration.name.to_owned(),
+                name: declaration.name.clone(),
                 binding: declaration.binding.unwrap(),
                 storage_type: declaration.storage(),
                 instances: Vec::new(),
@@ -146,13 +148,13 @@ impl Descriptors {
             .iter()
             .filter(|declaration| declaration.binding.is_some())
             .map(|declaration| DescriptorBinding {
-                name: declaration.identifier.as_ref().unwrap().to_owned(),
+                name: declaration.identifier.as_ref().unwrap().clone(),
                 binding: declaration.binding.unwrap(),
                 storage_type: declaration.storage,
                 instances: Vec::new(),
             });
 
-        Ok(Descriptors(vars.chain(blocks).collect()))
+        Descriptors(vars.chain(blocks).collect())
     }
 
     pub fn get_write_descriptor_set(

@@ -60,7 +60,7 @@ impl ShaderResources {
         let shader_module = ShaderModule::new(device, shader_path)?;
 
         // Descriptors.
-        let descriptors = Descriptors::new(&shader_module)?;
+        let descriptors = Descriptors::new(&shader_module);
         let descriptor_layout = DescriptorLayout::new(device, &descriptors)?;
 
         // Pipelines.

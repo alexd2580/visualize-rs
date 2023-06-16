@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 #[derive(Debug)]
-pub enum CpalError {
+pub enum Cpal {
     SupportedStreamConfigs(cpal::SupportedStreamConfigsError),
     BuildStream(cpal::BuildStreamError),
     PlayStream(cpal::PlayStreamError),
@@ -14,7 +14,7 @@ pub enum Error {
     Os(winit::error::OsError),
     Io(std::io::Error),
     Parse(glsl::parser::ParseError),
-    Cpal(CpalError),
+    Cpal(Cpal),
 }
 
 impl Display for Error {
@@ -58,18 +58,18 @@ impl From<glsl::parser::ParseError> for Error {
 
 impl From<cpal::SupportedStreamConfigsError> for Error {
     fn from(value: cpal::SupportedStreamConfigsError) -> Self {
-        Self::Cpal(CpalError::SupportedStreamConfigs(value))
+        Self::Cpal(Cpal::SupportedStreamConfigs(value))
     }
 }
 
 impl From<cpal::BuildStreamError> for Error {
     fn from(value: cpal::BuildStreamError) -> Self {
-        Self::Cpal(CpalError::BuildStream(value))
+        Self::Cpal(Cpal::BuildStream(value))
     }
 }
 
 impl From<cpal::PlayStreamError> for Error {
     fn from(value: cpal::PlayStreamError) -> Self {
-        Self::Cpal(CpalError::PlayStream(value))
+        Self::Cpal(Cpal::PlayStream(value))
     }
 }

@@ -29,9 +29,9 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 - [ ] ~Fix descriptor set allocation and binding~
 - [x] Repopulate descriptors cache on shader rebuild, separate it as from `Descriptors`?
 - [x] Bind images in different binding modes, e.g. sampler vs storage_image
-- [ ] Resize client images on resize. Static ~vs dynamic? Vulkan managed?~
+- [x] Resize client images on resize. Static ~vs dynamic? Vulkan managed?~
+- [x] Improve sequence of vulkan high-level operations: swapchain reinit, image reinit, etc...
 - [ ] Exponentialize dft index on CPU side once?
-- [ ] Improve sequence of vulkan high-level operations: swapchain reinit, image reinit, etc...
 - [ ] Run the app even without pipeline etc, when no shaders are working from the get-go.
 - [ ] Better bloom? Using linear image samplers?
 - [ ] use host_cached memory and flushes instead of _hoping_ that coherent writes work fine

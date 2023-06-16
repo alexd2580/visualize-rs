@@ -52,7 +52,7 @@ fn init_input_stream(
     )
     .ok_or_else(|| Error::Local("Failed to choose stream config".to_owned()))?;
 
-    let print_error = |err| eprintln!("Audio input error: {}", err);
+    let print_error = |err| eprintln!("Audio input error: {err}");
 
     let read =
         move |samples: &[f32], _: &cpal::InputCallbackInfo| buffer.write().write_samples(samples);
