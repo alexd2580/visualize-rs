@@ -7,8 +7,6 @@ use ash::{self, vk};
 use crate::error::Error;
 use crate::window::Window;
 
-use super::entry::Entry;
-
 pub struct Instance {
     pub instance: ash::Instance,
 }
@@ -22,7 +20,7 @@ impl Deref for Instance {
 }
 
 impl Instance {
-    pub unsafe fn new(window: &Window, entry: &Entry) -> Result<Rc<Self>, Error> {
+    pub unsafe fn new(window: &Window, entry: &ash::Entry) -> Result<Rc<Self>, Error> {
         debug!("Creating instance");
         let app_info = vk::ApplicationInfo::builder().api_version(vk::make_api_version(0, 1, 3, 0));
 

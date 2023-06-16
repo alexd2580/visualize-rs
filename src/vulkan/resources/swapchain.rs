@@ -1,15 +1,15 @@
 use std::{ops::Deref, rc::Rc};
 
-use ash::vk;
+use ash::{extensions::khr::Swapchain as SwapchainLoader, vk};
 
 use log::debug;
 
 use crate::error::Error;
 
-use super::{surface::Surface, surface_info::SurfaceInfo, swapchain_loader::SwapchainLoader};
+use super::{surface::Surface, surface_info::SurfaceInfo};
 
 pub struct Swapchain {
-    swapchain_loader: Rc<SwapchainLoader>,
+    swapchain_loader: SwapchainLoader,
     swapchain: vk::SwapchainKHR,
 }
 
@@ -25,7 +25,7 @@ impl Swapchain {
     pub unsafe fn new(
         surface: &Surface,
         surface_info: &SurfaceInfo,
-        swapchain_loader: &Rc<SwapchainLoader>,
+        swapchain_loader: &SwapchainLoader,
         old_swapchain: Option<vk::SwapchainKHR>,
     ) -> Result<Rc<Swapchain>, Error> {
         debug!("Creating swapchain");
@@ -38,7 +38,11 @@ impl Swapchain {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_info.surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
+            .image_usage(
+                vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::STORAGE
+                    | vk::ImageUsageFlags::SAMPLED,
+            )
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(vk::SurfaceTransformFlagsKHR::IDENTITY)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)

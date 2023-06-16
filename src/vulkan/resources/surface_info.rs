@@ -1,10 +1,10 @@
-use log::debug;
+use log::{debug, error, warn};
 
-use ash::vk;
+use ash::{extensions::khr::Surface as SurfaceLoader, vk};
 
 use crate::error::Error;
 
-use super::{physical_device::PhysicalDevice, surface::Surface, surface_loader::SurfaceLoader};
+use super::{physical_device::PhysicalDevice, surface::Surface};
 
 #[derive(Debug)]
 pub struct SurfaceInfo {
@@ -17,10 +17,10 @@ pub struct SurfaceInfo {
 
 impl SurfaceInfo {
     pub unsafe fn new(
-        (width, height): (u32, u32),
         physical_device: &PhysicalDevice,
         surface_loader: &SurfaceLoader,
         surface: &Surface,
+        vsync: bool,
     ) -> Result<Self, Error> {
         debug!("Collecting surface info");
 
@@ -35,15 +35,22 @@ impl SurfaceInfo {
 
         // For reference see:
         // https://www.reddit.com/r/vulkan/comments/9txqqb/what_is_presentation_mode/
+
+        let desired_present_mode = if vsync {
+            vk::PresentModeKHR::FIFO_RELAXED
+        } else {
+            vk::PresentModeKHR::IMMEDIATE
+        };
+
         let desired_present_mode = present_modes
             .into_iter()
-            .find(|&mode| mode == vk::PresentModeKHR::FIFO)
+            .find(|&mode| mode == desired_present_mode)
             .ok_or_else(|| Error::Local("There is no vsync present mode".to_owned()))?;
 
         // Check that the surface supports storage write/can be used in compute shaders.
         if !surface_capabilities
             .supported_usage_flags
-            .contains(vk::ImageUsageFlags::STORAGE)
+            .contains(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED)
         {
             return Err(Error::Local(
                 "Surface cannot be used for storage".to_owned(),
@@ -59,10 +66,15 @@ impl SurfaceInfo {
             desired_image_count = max_image_count;
         }
 
-        let surface_resolution = match surface_capabilities.current_extent.width {
-            std::u32::MAX => vk::Extent2D { width, height },
-            _ => surface_capabilities.current_extent,
-        };
+        let mut surface_resolution = surface_capabilities.current_extent;
+        if surface_resolution.width == std::u32::MAX {
+            error!("Unexpected situation: {surface_capabilities:?}");
+            warn!("Setting surface resolution to HD");
+            surface_resolution = vk::Extent2D {
+                width: 1280,
+                height: 720,
+            };
+        }
 
         Ok(SurfaceInfo {
             surface_format,

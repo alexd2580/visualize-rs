@@ -7,13 +7,13 @@ use crate::error::Error;
 
 use super::{
     resources::{
-        device::Device, device_memory::DeviceMemory, image::Image,
-        image_subresource_range::ImageSubresourceRange, image_view::ImageView,
+        device::Device, device_memory::DeviceMemory, image::Image, image_view::ImageView,
         physical_device::PhysicalDevice, surface_info::SurfaceInfo,
     },
     Vulkan,
 };
 
+#[derive(Clone)]
 pub struct MultiImageUnit {
     pub image: Rc<Image>,
     pub memory: Rc<DeviceMemory>,
@@ -25,9 +25,10 @@ impl MultiImageUnit {
         physical_device: &PhysicalDevice,
         device: &Rc<Device>,
         surface_info: &SurfaceInfo,
-        image_subresource_range: &ImageSubresourceRange,
+        size: vk::Extent2D,
+        image_subresource_range: &vk::ImageSubresourceRange,
     ) -> Result<Self, Error> {
-        let image = Image::new(device, surface_info)?;
+        let image = Image::new(device, surface_info, size)?;
         let required_memory_size = image.get_required_memory_size().unwrap();
         let memory = DeviceMemory::new(
             physical_device.image_memory_type_index,
@@ -62,19 +63,18 @@ impl MultiImage {
         physical_device: &Rc<PhysicalDevice>,
         device: &Rc<Device>,
         surface_info: &SurfaceInfo,
-        image_subresource_range: &ImageSubresourceRange,
+        image_subresource_range: &vk::ImageSubresourceRange,
+        size: vk::Extent2D,
         num_images: usize,
     ) -> Result<Rc<Self>, Error> {
-        debug!(
-            "Creating image of size {:?}",
-            surface_info.surface_resolution
-        );
+        debug!("Creating image of size {:?}", size);
         let images = (0..num_images)
             .map(|_| {
                 MultiImageUnit::new(
                     physical_device,
                     device,
                     surface_info,
+                    size,
                     image_subresource_range,
                 )
             })
@@ -85,7 +85,7 @@ impl MultiImage {
 
 impl Drop for MultiImage {
     fn drop(&mut self) {
-        debug!("Destroying buffer");
+        debug!("Destroying image");
     }
 }
 
@@ -93,6 +93,7 @@ impl Vulkan {
     pub fn new_multi_image(
         &mut self,
         name: &str,
+        size: vk::Extent2D,
         num_images: Option<usize>,
     ) -> Result<Rc<MultiImage>, Error> {
         unsafe {
@@ -102,11 +103,13 @@ impl Vulkan {
                 &self.device,
                 &self.surface_info,
                 &self.image_subresource_range,
+                size,
                 num_images,
             )?;
 
             for image_unit in image.iter() {
                 self.stale_images.push((
+                    name.to_owned(),
                     image_unit.image.clone(),
                     vk::ImageLayout::UNDEFINED,
                     vk::ImageLayout::GENERAL,
@@ -121,5 +124,26 @@ impl Vulkan {
 
             Ok(image)
         }
+    }
+
+    pub fn prev_shift(&mut self, multi_image: &MultiImage, name: &str) -> Rc<MultiImage> {
+        let last_index = multi_image.len() - 1;
+        let reordered_images = multi_image[last_index..]
+            .iter()
+            .chain(multi_image[..last_index].iter())
+            .cloned()
+            .collect();
+        let multi_image = Rc::new(MultiImage(reordered_images));
+
+        // I don't need to mark these images as stale, because they are shared with the original
+        // image, which should have already been transitioned.
+
+        let views_and_samplers = multi_image
+            .iter()
+            .map(|unit| (unit.view.clone(), self.sampler.clone()))
+            .collect::<Vec<_>>();
+        self.register_image(name, &views_and_samplers);
+
+        multi_image
     }
 }

@@ -60,7 +60,7 @@ impl Deref for PhysicalDevice {
     }
 }
 
-fn choose_buffer_memory_type(index: usize, memory_type: &vk::MemoryType) -> Option<u32> {
+fn choose_buffer_memory_type(index: usize, memory_type: vk::MemoryType) -> Option<u32> {
     let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL
         | vk::MemoryPropertyFlags::HOST_VISIBLE
         | vk::MemoryPropertyFlags::HOST_COHERENT;
@@ -72,7 +72,7 @@ fn choose_buffer_memory_type(index: usize, memory_type: &vk::MemoryType) -> Opti
     }
 }
 
-fn choose_image_memory_type(index: usize, memory_type: &vk::MemoryType) -> Option<u32> {
+fn choose_image_memory_type(index: usize, memory_type: vk::MemoryType) -> Option<u32> {
     let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     if memory_type.property_flags.contains(desired_flags) {
@@ -98,13 +98,13 @@ impl PhysicalDevice {
         let buffer_memory_type_index = memory_types
             .iter()
             .enumerate()
-            .find_map(|(index, memory_type)| choose_buffer_memory_type(index, memory_type))
+            .find_map(|(index, memory_type)| choose_buffer_memory_type(index, *memory_type))
             .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
 
         let image_memory_type_index = memory_types
             .iter()
             .enumerate()
-            .find_map(|(index, memory_type)| choose_image_memory_type(index, memory_type))
+            .find_map(|(index, memory_type)| choose_image_memory_type(index, *memory_type))
             .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
 
         Ok(Rc::new(PhysicalDevice {

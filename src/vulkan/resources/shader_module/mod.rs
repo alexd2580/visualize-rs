@@ -14,6 +14,8 @@ use ash::vk;
 
 use crate::error::Error;
 
+use self::analysis::DescriptorInfo;
+
 use super::device::Device;
 
 pub mod analysis;
@@ -38,6 +40,8 @@ pub mod analysis;
 /// let words = ash::util::read_spv(&mut std::io::Cursor::new(&SPIRV[..])).unwrap();
 /// ```
 pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
+    const MAGIC_NUMBER: u32 = 0x0723_0203;
+
     let size = x.seek(io::SeekFrom::End(0))?;
     if size % 4 != 0 {
         return Err(io::Error::new(
@@ -54,8 +58,9 @@ pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
     // reading uninitialized memory.
     let mut result = vec![0u32; words];
     x.seek(io::SeekFrom::Start(0))?;
-    x.read_exact(unsafe { slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, words * 4) })?;
-    const MAGIC_NUMBER: u32 = 0x0723_0203;
+    x.read_exact(unsafe {
+        slice::from_raw_parts_mut(result.as_mut_ptr().cast::<u8>(), words * 4)
+    })?;
     if !result.is_empty() && result[0] == MAGIC_NUMBER.swap_bytes() {
         for word in &mut result {
             *word = word.swap_bytes();
@@ -109,14 +114,14 @@ impl Display for ShaderModule {
         writeln!(f, "  Main name:  {}", self.main_name)?;
         writeln!(f, "  Local size: {:?}", self.local_size)?;
         writeln!(f, "  Variable Declarations:")?;
-        for declaration in self.variable_declarations.iter() {
+        for declaration in &self.variable_declarations {
             writeln!(f, "    {}:", declaration.name)?;
-            writeln!(f, "      Type:    {:?}", vk::DescriptorType::STORAGE_IMAGE)?;
+            writeln!(f, "      Type:    {:?}", declaration.storage())?;
             writeln!(f, "      Set:     {:?}", declaration.set)?;
             writeln!(f, "      Binding: {:?}", declaration.binding)?;
         }
         writeln!(f, "  Block Declarations:")?;
-        for declaration in self.block_declarations.iter() {
+        for declaration in &self.block_declarations {
             writeln!(f, "    {} {:?}:", declaration.name, declaration.identifier)?;
             writeln!(f, "      Type:    {:?}", declaration.storage)?;
             writeln!(f, "      Set:     {:?}", declaration.set)?;
@@ -151,7 +156,7 @@ impl ShaderModule {
             main_name,
         };
 
-        debug!("Compiled shader: {shader_module}");
+        // debug!("Compiled shader: {shader_module}");
         Ok(Rc::new(shader_module))
     }
 

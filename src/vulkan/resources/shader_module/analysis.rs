@@ -45,12 +45,11 @@ fn match_globals(
                     let (name, maybe_value) = id?;
 
                     // Currently we only expect int values.
-                    let value = if let Some(&syntax::Expr::IntConst(value)) = maybe_value {
-                        value as u32
-                    } else {
-                        let msg = format!("Unexpected value: {:?}", maybe_value);
+                    let Some(&syntax::Expr::IntConst(value)) = maybe_value else {
+                        let msg = format!("Unexpected value: {maybe_value:?}");
                         return Err(Error::Local(msg));
                     };
+                    let value = value as u32;
 
                     match name {
                         "local_size_x" => local_size.0 = value,
@@ -91,7 +90,14 @@ pub struct VariableDeclaration {
 
 impl DescriptorInfo for VariableDeclaration {
     fn storage(&self) -> vk::DescriptorType {
-        vk::DescriptorType::STORAGE_IMAGE
+        match self.type_specifier {
+            syntax::TypeSpecifierNonArray::Image2D => vk::DescriptorType::STORAGE_IMAGE,
+            syntax::TypeSpecifierNonArray::Sampler2D => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            _ => {
+                warn!("Assuming STORAGE_IMAGE for {:?}", self.type_specifier);
+                vk::DescriptorType::STORAGE_IMAGE
+            }
+        }
     }
 
     fn set_index(&self) -> usize {
@@ -135,12 +141,9 @@ fn match_init_declarator_list(
         ref tail,
     } = init_declarator_list;
 
-    let type_qualifier_specs = if let Some(syntax::TypeQualifier {
+    let Some(syntax::TypeQualifier {
         qualifiers: syntax::NonEmpty(ref type_qualifier_specs),
-    }) = type_qualifier
-    {
-        type_qualifier_specs
-    } else {
+    }) = type_qualifier else {
         let msg = format!("Unexpected type qualifier: {type_qualifier:?}");
         return Err(Error::Local(msg));
     };
@@ -227,7 +230,7 @@ pub struct BlockField {
 
 impl BlockField {
     pub fn byte_size(&self) -> Option<u32> {
-        let item_size = match &self.type_specifier {
+        Some(match &self.type_specifier {
             syntax::TypeSpecifierNonArray::Void => 1,
             syntax::TypeSpecifierNonArray::Bool => 1,
             syntax::TypeSpecifierNonArray::Int => 4,
@@ -253,9 +256,7 @@ impl BlockField {
             syntax::TypeSpecifierNonArray::Mat42 => 8 * 4,
             syntax::TypeSpecifierNonArray::Mat43 => 12 * 4,
             unexpected => panic!("Haven't implemented size map for type {unexpected:?}"),
-        };
-
-        Some(item_size)
+        })
     }
 }
 
@@ -284,7 +285,7 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                     for id in simplify_layout_qualifiers(ids) {
                         match id? {
                             ("offset", Some(&syntax::Expr::IntConst(value))) => {
-                                offset = Some(value)
+                                offset = Some(value);
                             }
                             unexpected => {
                                 let msg = format!("Unexpected layout identifier: {unexpected:?}");
@@ -438,7 +439,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                         let msg = format!("Unexpected storage qualifier: {unexpected:?}");
                         return Err(Error::Local(msg));
                     }
-                })
+                });
             }
             syntax::TypeQualifierSpec::Layout(syntax::LayoutQualifier {
                 ids: syntax::NonEmpty(ids),
@@ -448,10 +449,11 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                     match (name, maybe_value) {
                         // Currently we only expect int values for bindings.
                         ("binding", Some(&syntax::Expr::IntConst(value))) => {
-                            binding = Some(value as u32)
+                            binding = Some(value as u32);
                         }
-                        ("push_constant", None) => layout_qualifiers.push(name.to_owned()),
-                        ("std140", None) => layout_qualifiers.push(name.to_owned()),
+                        ("push_constant", None) | ("std140", None) => {
+                            layout_qualifiers.push(name.to_owned());
+                        }
                         ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
@@ -499,28 +501,28 @@ pub fn analyze_shader(path: &Path) -> Result<ShaderIO, Error> {
     let mut declarations = Vec::new();
     let mut blocks = Vec::new();
 
-    for external_declaration in external_declarations.iter() {
+    for external_declaration in &external_declarations {
         match external_declaration {
             syntax::ExternalDeclaration::Declaration(declaration) => match declaration {
                 // Global declarations include the local size of the shader.
                 // This is relevant for the dispatch size.
                 syntax::Declaration::Global(type_qualifier, global_names) => {
-                    local_size = match_globals(type_qualifier, global_names)?
+                    local_size = match_globals(type_qualifier, global_names)?;
                 }
                 // Init declarator lists define images accessed via samplers.
                 syntax::Declaration::InitDeclaratorList(init_declarator_list) => {
                     match_init_declarator_list(init_declarator_list)?
                         .into_iter()
-                        .for_each(|declaration| declarations.push(declaration))
+                        .for_each(|declaration| declarations.push(declaration));
                 }
                 syntax::Declaration::Block(block) => blocks.push(match_block(block)?),
                 // Ignore the following.
-                syntax::Declaration::Precision(..) => {}
-                syntax::Declaration::FunctionPrototype(..) => {}
+                syntax::Declaration::Precision(..) | syntax::Declaration::FunctionPrototype(..) => {
+                }
             },
             // Ignore the following.
-            syntax::ExternalDeclaration::Preprocessor(..) => {}
-            syntax::ExternalDeclaration::FunctionDefinition(..) => {}
+            syntax::ExternalDeclaration::Preprocessor(..)
+            | syntax::ExternalDeclaration::FunctionDefinition(..) => {}
         }
     }
 

@@ -1,9 +1,8 @@
-use log::{debug, error};
+use log::debug;
 
-use ash::vk::SurfaceKHR as VkSurface;
+use ash::vk::{self, SurfaceKHR as VkSurface};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
-    dpi::PhysicalSize,
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
@@ -11,34 +10,31 @@ use winit::{
 };
 
 use crate::error::Error;
-use crate::vulkan::resources::{entry::Entry, instance::Instance};
+use crate::vulkan::resources::instance::Instance;
 
 pub trait App {
     fn run_frame(&mut self) -> ControlFlow;
-    fn handle_resize(&mut self, new_size: (u32, u32)) -> Result<(), Error>;
 }
 
 pub struct Window {
-    pub width: u32,
-    pub height: u32,
+    pub size: vk::Extent2D,
     event_loop: EventLoop<()>,
     window: WinitWindow,
 }
 
 impl Window {
-    pub fn new(width: u32, height: u32) -> Result<Self, Error> {
+    pub fn new(size: vk::Extent2D) -> Result<Self, Error> {
         debug!("Initializing video system");
 
         let event_loop = EventLoop::new();
-        let size = winit::dpi::LogicalSize::new(width, height);
+        let logical_size = winit::dpi::LogicalSize::new(size.width, size.height);
         let window = WindowBuilder::new()
             .with_title("visualize-rs")
-            .with_inner_size(size)
+            .with_inner_size(logical_size)
             .build(&event_loop)?;
 
         Ok(Window {
-            width,
-            height,
+            size,
             event_loop,
             window,
         })
@@ -50,7 +46,11 @@ impl Window {
         Ok(extensions.to_vec())
     }
 
-    pub fn create_surface(&self, entry: &Entry, instance: &Instance) -> Result<VkSurface, Error> {
+    pub fn create_surface(
+        &self,
+        entry: &ash::Entry,
+        instance: &Instance,
+    ) -> Result<VkSurface, Error> {
         unsafe {
             Ok(ash_window::create_surface(
                 entry,
@@ -62,7 +62,7 @@ impl Window {
         }
     }
 
-    fn handle_event<T: App>(event: Event<()>, app: &mut T) -> ControlFlow {
+    fn handle_event<T: App>(event: &Event<()>, app: &mut T) -> ControlFlow {
         match event {
             Event::WindowEvent {
                 event:
@@ -79,22 +79,20 @@ impl Window {
                 ..
             } => ControlFlow::Exit,
             Event::WindowEvent {
-                event: WindowEvent::Resized(PhysicalSize { width, height }),
+                event: WindowEvent::Resized(..),
                 ..
-            } => match app.handle_resize((width, height)) {
-                Ok(()) => ControlFlow::Poll,
-                Err(error) => {
-                    error!("Failed to handle window resize: {:?}", error);
-                    ControlFlow::ExitWithCode(1)
-                }
-            },
+            } => {
+                // Ignoring window event. Resize handled via Vulkan.
+                ControlFlow::Poll
+            }
             Event::MainEventsCleared => app.run_frame(),
             _ => ControlFlow::Poll,
         }
     }
 
     pub fn run_main_loop<T: App>(&mut self, app: &mut T) {
-        self.event_loop
-            .run_return(|event, &_, control_flow| *control_flow = Window::handle_event(event, app));
+        self.event_loop.run_return(|event, &_, control_flow| {
+            *control_flow = Window::handle_event(&event, app)
+        });
     }
 }

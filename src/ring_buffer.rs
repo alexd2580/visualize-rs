@@ -53,42 +53,27 @@ impl<T: Clone + Copy + Default> RingBuffer<T> {
         buffer[from_start..].copy_from_slice(&end[end.len() - from_end..]);
     }
 
-    /// Read chronologically from `read_pos` until the latest written audio sample: `write_pos`.
-    pub fn iter_at(&self, read_index: usize) -> impl Iterator<Item = &T> {
-        let write_index = self.write_index;
-        let buffer = self.data.as_slice();
-        let (init_end_index, tail_end_index) = if read_index < write_index {
-            (write_index, 0)
-        } else {
-            (buffer.len(), write_index)
-        };
-        buffer[read_index..init_end_index]
-            .iter()
-            .chain(buffer[0..tail_end_index].iter())
-    }
-
     /// Write the rinbuffer to the pointer, posting its size and write index first and then
     /// updating only the section that has been modified, namely `[read_index..(potential
     /// wraparound)..write_index]`.
-    pub fn write_to_pointer(&self, read_index: usize, target: *mut c_void) {
+    pub fn write_to_pointer(&self, read_index: usize, write_index: usize, target: *mut c_void) {
         unsafe {
             let size = self.size as u32;
             *target.cast() = size;
             let target = target.add(mem::size_of::<u32>());
 
-            let write_index = self.write_index as u32;
-            *target.cast() = write_index;
+            *target.cast() = write_index as u32;
             let target = target.add(mem::size_of::<u32>());
 
-            if read_index <= self.write_index {
-                let data = &self.data.as_slice()[read_index..self.write_index];
+            if read_index <= write_index {
+                let data = &self.data.as_slice()[read_index..write_index];
                 let target = target.add(read_index * mem::size_of::<f32>());
-                let count = self.write_index - read_index;
+                let count = write_index - read_index;
                 data.as_ptr().copy_to(target.cast(), count);
             } else {
                 // Start part: 0 .. write_index
-                let data = &self.data.as_slice()[..self.write_index];
-                data.as_ptr().copy_to(target.cast(), self.write_index);
+                let data = &self.data.as_slice()[..write_index];
+                data.as_ptr().copy_to(target.cast(), write_index);
 
                 // End part: read_index .. size
                 let data = &self.data.as_slice()[read_index..];

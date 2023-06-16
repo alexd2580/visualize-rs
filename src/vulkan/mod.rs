@@ -1,15 +1,13 @@
 use std::{collections::HashMap, mem, ops::Deref, path::Path, rc::Rc};
 
-use ash::{extensions::khr::PushDescriptor, vk};
+use ash::{
+    extensions::khr::{PushDescriptor, Surface as SurfaceLoader, Swapchain as SwapchainLoader},
+    vk,
+};
 use filetime::FileTime;
 use log::{debug, error, info, warn};
-use winit::event_loop::ControlFlow;
 
-use crate::{
-    error::Error,
-    utils::mtime,
-    window::{App, Window},
-};
+use crate::{error::Error, utils::mtime, window::Window};
 
 pub mod multi_buffer;
 pub mod multi_image;
@@ -17,14 +15,15 @@ pub mod resources;
 
 use self::resources::{
     buffer::Buffer, command_buffer::CommandBuffer, command_pool::CommandPool,
-    compute_queue::ComputeQueue, descriptor_layout::DescriptorLayout, descriptors::Descriptors,
-    device::Device, entry::Entry, fence::Fence, image::Image,
-    image_subresource_range::ImageSubresourceRange, image_view::ImageView, instance::Instance,
-    physical_device::PhysicalDevice, pipeline::Pipeline, pipeline_layout::PipelineLayout,
-    sampler::Sampler, semaphore::Semaphore, shader_module::ShaderModule, surface::Surface,
-    surface_info::SurfaceInfo, surface_loader::SurfaceLoader, swapchain::Swapchain,
-    swapchain_loader::SwapchainLoader,
+    descriptor_layout::DescriptorLayout, descriptors::Descriptors, device::Device, fence::Fence,
+    image::Image, image_view::ImageView, instance::Instance, physical_device::PhysicalDevice,
+    pipeline::Pipeline, pipeline_layout::PipelineLayout, sampler::Sampler, semaphore::Semaphore,
+    shader_module::ShaderModule, surface::Surface, surface_info::SurfaceInfo, swapchain::Swapchain,
 };
+
+pub enum Event {
+    Resized,
+}
 
 enum Value {
     U32(u32),
@@ -79,7 +78,11 @@ impl ShaderResources {
     }
 
     fn invalidate_association_cache(&mut self) {
-        if !self.descriptors.is_empty() {
+        if !self
+            .descriptors
+            .iter()
+            .all(|descriptor| descriptor.instances.is_empty())
+        {
             debug!(
                 "Invalidating image and buffer binding cache for shader {:?}",
                 self.shader_module.source_path
@@ -126,67 +129,73 @@ pub struct Vulkan {
     swapchain_image_views: Vec<Rc<ImageView>>,
     swapchain_images: Vec<Rc<Image>>,
     swapchain: Option<Rc<Swapchain>>,
-    swapchain_loader: Rc<SwapchainLoader>,
+    swapchain_loader: SwapchainLoader,
 
     // Resources.
     available_buffers: AvailableBuffers,
     available_images: AvailableImages,
 
     // Staleness markers.
-    stale_images: Vec<(Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
-    stale_swapchain: bool,
+    stale_images: Vec<(String, Rc<Image>, vk::ImageLayout, vk::ImageLayout)>,
 
     // Image data.
     sampler: Rc<Sampler>,
-    image_subresource_range: ImageSubresourceRange,
-    surface_info: SurfaceInfo,
-    window_size: (u32, u32),
+    image_subresource_range: vk::ImageSubresourceRange,
+    pub surface_info: SurfaceInfo,
+    vsync: bool,
 
     // Device.
     push_descriptor: PushDescriptor,
     command_buffer: Rc<CommandBuffer>,
     _command_pool: Rc<CommandPool>,
-    compute_queue: Rc<ComputeQueue>,
+    compute_queue: vk::Queue,
     device: Rc<Device>,
     physical_device: Rc<PhysicalDevice>,
     surface: Rc<Surface>,
-    surface_loader: Rc<SurfaceLoader>,
+    surface_loader: SurfaceLoader,
 
     // Core.
     _instance: Rc<Instance>,
-    _entry: Rc<Entry>,
+    _entry: ash::Entry,
 }
 
 impl Vulkan {
     pub fn new(
         window: &Window,
         compute_shader_paths: &[impl Deref<Target = Path>],
+        vsync: bool,
     ) -> Result<Self, Error> {
         debug!("Initializing video system");
         unsafe {
             // Core.
-            let entry = Entry::new()?;
+            let entry = ash::Entry::linked();
             let instance = Instance::new(window, &entry)?;
 
             // Device.
-            let surface_loader = SurfaceLoader::new(&entry, &instance)?;
+            let surface_loader = SurfaceLoader::new(&entry, &instance);
             let surface = Surface::new(window, &entry, &instance, &surface_loader)?;
             let physical_device = PhysicalDevice::new(&instance, &surface)?;
             let device = Device::new(&instance, &physical_device)?;
-            let compute_queue = ComputeQueue::new(&physical_device, &device)?;
+            let compute_queue =
+                device.get_device_queue(physical_device.compute_queue_family_index, 0);
             let command_pool = CommandPool::new(&physical_device, &device)?;
             let command_buffer = CommandBuffer::new(&device, &command_pool)?;
             let push_descriptor = PushDescriptor::new(&instance, &device);
 
             // Image data.
-            let window_size = (window.width, window.height);
             let surface_info =
-                SurfaceInfo::new(window_size, &physical_device, &surface_loader, &surface)?;
-            let image_subresource_range = ImageSubresourceRange::new()?;
+                SurfaceInfo::new(&physical_device, &surface_loader, &surface, vsync)?;
+            let image_subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+
             let sampler = Sampler::new(&device)?;
 
             // Staleness markers.
-            let stale_swapchain = true;
             let stale_images = Vec::new();
 
             // Resources.
@@ -194,7 +203,7 @@ impl Vulkan {
             let available_buffers = HashMap::new();
 
             // Swapchain.
-            let swapchain_loader = SwapchainLoader::new(&instance, &device)?;
+            let swapchain_loader = SwapchainLoader::new(&instance, &device);
             let swapchain = None;
             let swapchain_images = Vec::new();
             let swapchain_image_views = Vec::new();
@@ -209,7 +218,7 @@ impl Vulkan {
             let image_acquired_semaphore = Semaphore::new(&device)?;
             let compute_complete_semaphore = Semaphore::new(&device)?;
 
-            Ok(Vulkan {
+            let mut vulkan = Vulkan {
                 _entry: entry,
                 _instance: instance,
                 surface_loader,
@@ -220,11 +229,10 @@ impl Vulkan {
                 _command_pool: command_pool,
                 command_buffer,
                 push_descriptor,
-                window_size,
+                vsync,
                 surface_info,
                 image_subresource_range,
                 sampler,
-                stale_swapchain,
                 stale_images,
                 available_images,
                 available_buffers,
@@ -238,7 +246,11 @@ impl Vulkan {
                 image_acquired_semaphore,
                 compute_complete_semaphore,
                 num_frames: 0,
-            })
+            };
+
+            vulkan.reinitialize_swapchain()?;
+
+            Ok(vulkan)
         }
     }
 
@@ -258,15 +270,19 @@ impl Vulkan {
     unsafe fn recompile_shader_if_modified(&mut self) -> Result<(), Error> {
         for index in 0..self.shader_resources.len() {
             let path = &self.shader_resources[index].shader_module.source_path;
-            if mtime(path)? > self.shader_resources[index].shader_module_mtime {
-                info!("Recompiling {path:?}...");
+            let previous_mtime = self.shader_resources[index].shader_module_mtime;
+            if mtime(path)? > previous_mtime {
+                info!("Recompiling {path:?} ...");
                 self.wait_idle();
 
                 let new_resources = ShaderResources::new(&self.device, path);
 
                 match new_resources {
                     Ok(new_resources) => self.shader_resources[index] = new_resources,
-                    Err(err) => error!("{err}"),
+                    Err(err) => {
+                        error!("{err}");
+                        self.shader_resources[index].shader_module_mtime = mtime(path)?;
+                    }
                 }
             }
         }
@@ -310,14 +326,14 @@ impl Vulkan {
         self.invalidate_shader_association_cache();
     }
 
-    pub unsafe fn reinitialize_swapchain_if_needed(&mut self) -> Result<bool, Error> {
-        if !self.stale_swapchain {
-            return Ok(false);
-        }
-        self.stale_swapchain = false;
-
+    pub unsafe fn reinitialize_swapchain(&mut self) -> Result<(), Error> {
         debug!("Reinitializing swapchain");
         self.wait_idle();
+
+        // After a resize (TODO Fix function name) all images need to be reinitialized anyway. The
+        // case where not clearing this vector leads to issues is rather special, it occurs once on
+        // app start and when there are two consecutive resize events.
+        self.stale_images.clear();
 
         // TODO
         // The following code first creates the new resources, replaces them in `self` and only
@@ -326,10 +342,10 @@ impl Vulkan {
         // and `drop`.
 
         self.surface_info = SurfaceInfo::new(
-            self.window_size,
             &self.physical_device,
             &self.surface_loader,
             &self.surface,
+            self.vsync,
         )?;
         self.swapchain = Some(Swapchain::new(
             &self.surface,
@@ -340,8 +356,9 @@ impl Vulkan {
         self.swapchain_images =
             Image::many_from_swapchain(&self.swapchain_loader, self.swapchain())?;
 
-        for image in self.swapchain_images.iter() {
+        for image in &self.swapchain_images {
             self.stale_images.push((
+                self.present_name.clone(),
                 image.clone(),
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::PRESENT_SRC_KHR,
@@ -359,10 +376,10 @@ impl Vulkan {
             .map(|image_view| (image_view.clone(), self.sampler.clone()))
             .collect::<Vec<_>>();
 
-        let present_name = self.present_name.to_owned();
+        let present_name = self.present_name.clone();
         self.register_image(&present_name, &views_and_samplers);
 
-        Ok(true)
+        Ok(())
     }
 
     unsafe fn begin_command_buffer(&self) -> Result<(), Error> {
@@ -391,7 +408,7 @@ impl Vulkan {
             .build();
 
         Ok(self.device.queue_submit(
-            **self.compute_queue,
+            self.compute_queue,
             &[submit_info],
             **self.reuse_command_buffer_fence,
         )?)
@@ -426,7 +443,7 @@ impl Vulkan {
     ) {
         let memory_barrier = vk::ImageMemoryBarrier::builder()
             .image(image)
-            .subresource_range(*self.image_subresource_range)
+            .subresource_range(self.image_subresource_range)
             .old_layout(old_layout)
             .new_layout(new_layout)
             .build();
@@ -448,7 +465,7 @@ impl Vulkan {
         self.reuse_command_buffer_fence.reset()?;
         self.begin_command_buffer()?;
         let stale_images = mem::take(&mut self.stale_images);
-        for (image, old_layout, new_layout) in stale_images.into_iter() {
+        for (_, image, old_layout, new_layout) in stale_images {
             self.image_memory_barrier_layout_transition(**image, old_layout, new_layout);
         }
         self.end_command_buffer()?;
@@ -481,7 +498,7 @@ impl Vulkan {
 
             // Allocate constants memory.
             let constants_size = declaration.byte_size().unwrap() as usize;
-            let mut constants = vec![0; constants_size];
+            let mut constants = vec![0u8; constants_size];
             let constants_ptr = constants.as_mut_ptr();
 
             // Write requested fields into memory.
@@ -498,7 +515,7 @@ impl Vulkan {
                 match avail_fields.get(&field.name) {
                     None => error!("{} is not a registered push constant field", field.name),
                     Some(Value::U32(value)) => {
-                        *constants_ptr.add(offset).cast() = value;
+                        *constants_ptr.add(offset).cast::<u32>() = *value;
                     } // _ => warn!("Don't know how to handle {field:?}"),
                 }
             }
@@ -530,9 +547,9 @@ impl Vulkan {
 
     unsafe fn dispatch(&self, shader_module: &ShaderModule) {
         let local_size = shader_module.local_size;
-        let window_size = self.window_size;
-        let invocation_x = window_size.0 / local_size.0;
-        let invocation_y = window_size.1 / local_size.1;
+        let window_size = self.surface_info.surface_resolution;
+        let invocation_x = window_size.width / local_size.0;
+        let invocation_y = window_size.height / local_size.1;
         let invocation_z = 1; // Hardcode for now.
 
         self.device.cmd_dispatch(
@@ -552,7 +569,7 @@ impl Vulkan {
 
         Ok(self
             .swapchain_loader
-            .queue_present(**self.compute_queue, &present_info)
+            .queue_present(self.compute_queue, &present_info)
             .map(|suboptimal| {
                 if suboptimal {
                     warn!("Swapchain is suboptimal");
@@ -560,7 +577,7 @@ impl Vulkan {
             })?)
     }
 
-    unsafe fn render_next_frame(&mut self) -> Result<(), Error> {
+    unsafe fn render_next_frame(&mut self) -> Result<Option<Event>, Error> {
         let (present_index, present_image) = self.acquire_next_image()?;
 
         self.reuse_command_buffer_fence.wait()?;
@@ -603,14 +620,14 @@ impl Vulkan {
 
         // Present as soon as `compute_complete_semaphore` trips.
         let present_result = self.present(present_index);
-        if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) = present_result {
-            debug!("Marking swapchain as stale because window was resized.");
-            self.stale_swapchain = true;
-        }
-
         self.num_frames += 1;
 
-        Ok(())
+        if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) = present_result {
+            self.reinitialize_swapchain()?;
+            Ok(Some(Event::Resized))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn wait_idle(&self) {
@@ -621,30 +638,9 @@ impl Vulkan {
         }
     }
 
-    pub unsafe fn tick(&mut self) -> Result<(), Error> {
+    pub unsafe fn tick(&mut self) -> Result<Option<Event>, Error> {
         self.transition_stale_images()?;
         self.recompile_shader_if_modified()?;
-        if self.reinitialize_swapchain_if_needed()? {
-            return Ok(());
-        }
         self.render_next_frame()
-    }
-}
-
-impl App for Vulkan {
-    fn run_frame(&mut self) -> ControlFlow {
-        match unsafe { self.tick() } {
-            Err(error) => {
-                error!("{error}");
-                ControlFlow::ExitWithCode(1)
-            }
-            Ok(..) => ControlFlow::Poll,
-        }
-    }
-
-    fn handle_resize(&mut self, new_size: (u32, u32)) -> Result<(), Error> {
-        self.window_size = new_size;
-        self.stale_swapchain = true;
-        Ok(())
     }
 }

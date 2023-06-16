@@ -2,14 +2,14 @@ use std::{ops::Deref, rc::Rc};
 
 use log::debug;
 
-use ash::vk;
+use ash::{extensions::khr::Surface as SurfaceLoader, vk};
 
 use crate::{error::Error, window::Window};
 
-use super::{entry::Entry, instance::Instance, surface_loader::SurfaceLoader};
+use super::instance::Instance;
 
 pub struct Surface {
-    surface_loader: Rc<SurfaceLoader>,
+    surface_loader: SurfaceLoader,
     surface: vk::SurfaceKHR,
 }
 
@@ -24,9 +24,9 @@ impl Deref for Surface {
 impl Surface {
     pub fn new(
         window: &Window,
-        entry: &Entry,
+        entry: &ash::Entry,
         instance: &Instance,
-        surface_loader: &Rc<SurfaceLoader>,
+        surface_loader: &SurfaceLoader,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating surface");
         let surface_loader = surface_loader.clone();

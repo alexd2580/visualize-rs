@@ -124,7 +124,7 @@ impl Audio {
 
         debug!("Running audio streams");
         input_stream.play()?;
-        // output_stream.play().unwrap();
+        // output_stream.play()?;
 
         Ok(Audio {
             ring_buffer,

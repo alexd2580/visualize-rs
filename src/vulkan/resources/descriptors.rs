@@ -6,7 +6,9 @@ use ash::vk;
 
 use crate::{
     error::Error,
-    vulkan::{AvailableBuffers, AvailableImages},
+    vulkan::{
+        resources::shader_module::analysis::DescriptorInfo, AvailableBuffers, AvailableImages,
+    },
 };
 
 use super::shader_module::ShaderModule;
@@ -89,10 +91,7 @@ impl DescriptorBinding {
                 })
                 .map(Ok)
                 .unwrap_or_else(|| {
-                    let msg = format!(
-                        "Associating buffers for binding {}: {}",
-                        self.binding, self.name
-                    );
+                    let msg = format!("No buffer for binding {}: {}", self.binding, self.name);
                     Err(Error::Local(msg))
                 })?;
         }
@@ -138,7 +137,7 @@ impl Descriptors {
             .map(|declaration| DescriptorBinding {
                 name: declaration.name.to_owned(),
                 binding: declaration.binding.unwrap(),
-                storage_type: vk::DescriptorType::STORAGE_IMAGE, // TODO Could be texture type.
+                storage_type: declaration.storage(),
                 instances: Vec::new(),
             });
 

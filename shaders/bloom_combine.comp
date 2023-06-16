@@ -2,14 +2,22 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
+layout(push_constant, std140) uniform PushConstants {
+    layout(offset = 0) uint frame_index;
+};
+
 layout(rgba32f, binding = 0) uniform image2D intermediate;
 layout(rgba32f, binding = 1) uniform image2D bloom_hv;
-layout(rgba32f, binding = 2) uniform image2D present;
+layout(binding = 2) uniform sampler2D result_prev;
+layout(rgba32f, binding = 3) uniform image2D result;
+layout(rgba32f, binding = 4) uniform image2D present;
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
+    vec2 pixel = vec2(ipixel) / iimage_size;
 
+    vec3 prev = texture(result_prev, pixel + 0.01 * vec2(sin(0.002 * frame_index), cos(0.001999999 * frame_index))).rgb;
     vec3 color = imageLoad(intermediate, ipixel).rgb;
     vec3 bloom = imageLoad(bloom_hv, ipixel).rgb;
 
@@ -24,5 +32,8 @@ void main() {
     // const float gamma = 2.2;
     // result = pow(result, vec3(1.0 / gamma));
 
-    imageStore(present, ipixel, vec4(color + bloom, 1));
+    vec3 final_present = color + bloom;
+    vec3 final_result = 0.98 * prev + 0.02 * final_present;
+    imageStore(result, ipixel, vec4(final_result, 1));
+    imageStore(present, ipixel, vec4(final_present + final_result, 1));
 }
