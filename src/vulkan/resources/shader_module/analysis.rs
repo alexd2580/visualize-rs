@@ -49,7 +49,7 @@ fn match_globals(
                         let msg = format!("Unexpected value: {maybe_value:?}");
                         return Err(Error::Local(msg));
                     };
-                    let value = value as u32;
+                    let value = usize::try_from(value).unwrap();
 
                     match name {
                         "local_size_x" => local_size.0 = value,
@@ -75,7 +75,7 @@ fn match_globals(
 pub trait DescriptorInfo {
     fn storage(&self) -> vk::DescriptorType;
     fn set_index(&self) -> usize;
-    fn binding(&self) -> Result<u32, Error>;
+    fn binding(&self) -> Result<usize, Error>;
     fn name(&self) -> &str;
 }
 
@@ -83,7 +83,7 @@ pub trait DescriptorInfo {
 pub struct VariableDeclaration {
     pub name: String,
     pub type_specifier: syntax::TypeSpecifierNonArray,
-    pub binding: Option<u32>,
+    pub binding: Option<usize>,
     pub set: Option<usize>,
     pub type_format: Option<String>,
 }
@@ -107,7 +107,7 @@ impl DescriptorInfo for VariableDeclaration {
         })
     }
 
-    fn binding(&self) -> Result<u32, Error> {
+    fn binding(&self) -> Result<usize, Error> {
         self.binding.ok_or_else(|| {
             let msg = format!("Block '{}' does not specify a binding.", self.name);
             Error::Local(msg)
@@ -166,10 +166,12 @@ fn match_init_declarator_list(
                     match (name, maybe_value) {
                         // Currently we only expect int values for bindings.
                         ("binding", Some(&syntax::Expr::IntConst(value))) => {
-                            binding = Some(value as u32);
+                            binding = Some(usize::try_from(value).unwrap());
                         }
                         ("rgba32f", None) => type_format = Some(name.to_owned()),
-                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => {
+                            set = Some(usize::try_from(value).unwrap());
+                        }
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -224,12 +226,15 @@ fn match_init_declarator_list(
 pub struct BlockField {
     pub name: String,
     pub type_specifier: syntax::TypeSpecifierNonArray,
-    pub offset: Option<i32>,
-    pub dimensions: Option<Vec<Option<i32>>>,
+    pub offset: Option<usize>,
+    pub dimensions: Option<Vec<Option<usize>>>,
 }
 
 impl BlockField {
-    pub fn byte_size(&self) -> Option<u32> {
+    // We will check for dimensions and then this will be None-able.
+    #[allow(clippy::unnecessary_wraps)]
+    pub fn byte_size(&self) -> Option<usize> {
+        #[allow(clippy::match_same_arms)]
         Some(match &self.type_specifier {
             syntax::TypeSpecifierNonArray::Void => 1,
             syntax::TypeSpecifierNonArray::Bool => 1,
@@ -285,7 +290,7 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                     for id in simplify_layout_qualifiers(ids) {
                         match id? {
                             ("offset", Some(&syntax::Expr::IntConst(value))) => {
-                                offset = Some(value);
+                                offset = Some(usize::try_from(value).unwrap());
                             }
                             unexpected => {
                                 let msg = format!("Unexpected layout identifier: {unexpected:?}");
@@ -324,7 +329,7 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                     .map(|sizing| {
                         if let syntax::ArraySpecifierDimension::ExplicitlySized(expr_box) = sizing {
                             if let syntax::Expr::IntConst(value) = **expr_box {
-                                Ok(Some(value))
+                                Ok(Some(usize::try_from(value).unwrap()))
                             } else {
                                 let msg =
                                     format!("Unexpected array dimension value: {:?}", **expr_box);
@@ -334,7 +339,7 @@ fn match_block_field(block_field: &syntax::StructFieldSpecifier) -> Result<Block
                             Ok(None)
                         }
                     })
-                    .collect::<Result<Vec<Option<i32>>, Error>>()?,
+                    .collect::<Result<Vec<Option<usize>>, Error>>()?,
             )
         } else {
             None
@@ -359,7 +364,7 @@ pub struct BlockDeclaration {
     pub name: String,
     pub identifier: Option<String>,
     pub storage: vk::DescriptorType,
-    pub binding: Option<u32>,
+    pub binding: Option<usize>,
     pub set: Option<usize>,
     pub layout_qualifiers: Vec<String>,
     pub fields: Vec<BlockField>,
@@ -377,7 +382,7 @@ impl DescriptorInfo for BlockDeclaration {
         })
     }
 
-    fn binding(&self) -> Result<u32, Error> {
+    fn binding(&self) -> Result<usize, Error> {
         self.binding.ok_or_else(|| {
             let msg = format!("Block '{}' does not specify a binding.", self.name);
             Error::Local(msg)
@@ -389,11 +394,21 @@ impl DescriptorInfo for BlockDeclaration {
     }
 }
 
+fn alignment(x: usize) -> usize {
+    let exp = (x as f32).log2().ceil() as u32;
+    2usize.pow(exp)
+}
+
 impl BlockDeclaration {
-    pub fn byte_size(&self) -> Option<u32> {
-        self.fields.iter().fold(Some(0), |acc, item| {
-            acc.and_then(|acc| item.byte_size().map(|item| acc + item))
-        })
+    pub fn byte_size(&self) -> Option<usize> {
+        let mut max_size = 0;
+        for field in &self.fields {
+            let byte_size = field.byte_size()?;
+            let offset = field.offset?;
+
+            max_size = max_size.max(offset + alignment(byte_size));
+        }
+        Some(max_size)
     }
 }
 
@@ -449,12 +464,14 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
                     match (name, maybe_value) {
                         // Currently we only expect int values for bindings.
                         ("binding", Some(&syntax::Expr::IntConst(value))) => {
-                            binding = Some(value as u32);
+                            binding = Some(usize::try_from(value).unwrap());
                         }
                         ("push_constant" | "std140", None) => {
                             layout_qualifiers.push(name.to_owned());
                         }
-                        ("set", Some(&syntax::Expr::IntConst(value))) => set = Some(value as usize),
+                        ("set", Some(&syntax::Expr::IntConst(value))) => {
+                            set = Some(usize::try_from(value).unwrap());
+                        }
                         unexpected => {
                             let msg = format!("Unexpected layout identifier: {unexpected:?}");
                             return Err(Error::Local(msg));
@@ -487,7 +504,7 @@ fn match_block(block: &syntax::Block) -> Result<BlockDeclaration, Error> {
     })
 }
 
-pub type LocalSize = (u32, u32, u32);
+pub type LocalSize = (usize, usize, usize);
 pub type ShaderIO = (LocalSize, Vec<VariableDeclaration>, Vec<BlockDeclaration>);
 
 pub fn analyze_shader(path: &Path) -> Result<ShaderIO, Error> {

@@ -45,7 +45,7 @@ impl PipelineLayout {
             push_constant_ranges.push(
                 vk::PushConstantRange::builder()
                     .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                    .size(size)
+                    .size(u32::try_from(size).unwrap())
                     .offset(0)
                     .build(),
             );

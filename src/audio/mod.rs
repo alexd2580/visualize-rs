@@ -16,7 +16,7 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
     num_channels: u16,
     sample_rate: cpal::SampleRate,
     sample_format: cpal::SampleFormat,
-) -> Option<cpal::StreamConfig> {
+) -> Result<cpal::StreamConfig, Error> {
     configs_iter
         .into_iter()
         .find_map(|range: cpal::SupportedStreamConfigRange| {
@@ -31,11 +31,12 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
                 None
             }
         })
+        .ok_or_else(|| Error::Local("Failed to choose stream config".to_owned()))
 }
 
 fn init_input_stream(
     host: &cpal::Host,
-    desired_sample_rate: u32,
+    desired_sample_rate: usize,
     buffer: &ThreadShared<stereo::Stereo>,
 ) -> Result<cpal::Stream, Error> {
     let buffer = buffer.clone();
@@ -47,10 +48,9 @@ fn init_input_stream(
     let config = choose_stream_config(
         device.supported_input_configs()?,
         2,
-        cpal::SampleRate(desired_sample_rate),
+        cpal::SampleRate(u32::try_from(desired_sample_rate).unwrap()),
         desired_sample_format,
-    )
-    .ok_or_else(|| Error::Local("Failed to choose stream config".to_owned()))?;
+    )?;
 
     let print_error = |err| eprintln!("Audio input error: {err}");
 
@@ -60,46 +60,48 @@ fn init_input_stream(
     Ok(device.build_input_stream(&config, read, print_error)?)
 }
 
-// fn init_output_stream(host: &cpal::Host, desired_sample_rate: u32) -> cpal::Stream {
-//     let device = host.default_output_device().unwrap();
-//     let desired_sample_format = cpal::SampleFormat::F32;
-//     let config = choose_stream_config(
-//         device.supported_output_configs().unwrap(),
-//         2,
-//         cpal::SampleRate(desired_sample_rate),
-//         desired_sample_format,
-//     )
-//     .unwrap();
-//
-//     let print_error = |err| eprintln!("Audio output error: {}", err);
-//
-//     let mut samples_written = 0;
-//     let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
-//         let frequency = 200.0;
-//         for (index, channels) in data.chunks_mut(2).enumerate() {
-//             let x_s = (samples_written + index) as f32 / 44100.0
-//                 * (2.0 * std::f32::consts::PI)
-//                 * frequency;
-//             channels[0] = x_s.sin() / 10.0;
-//             channels[1] = x_s.sin() / 10.0;
-//         }
-//         samples_written += data.len() / 2;
-//     };
-//
-//     device
-//         .build_output_stream(&config, write_silence, print_error)
-//         .unwrap()
-// }
+fn init_output_stream(
+    host: &cpal::Host,
+    desired_sample_rate: usize,
+) -> Result<cpal::Stream, Error> {
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| Error::Local("Failed to get default output device.".to_owned()))?;
+    let desired_sample_format = cpal::SampleFormat::F32;
+    let config = choose_stream_config(
+        device.supported_output_configs()?,
+        2,
+        cpal::SampleRate(u32::try_from(desired_sample_rate).unwrap()),
+        desired_sample_format,
+    )?;
+
+    let print_error = |err| eprintln!("Audio output error: {err}");
+
+    let mut samples_written = 0;
+    let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
+        let frequency = 200.0;
+        for (index, channels) in data.chunks_mut(2).enumerate() {
+            let x_s = (samples_written + index) as f32 / 44100.0
+                * (2.0 * std::f32::consts::PI)
+                * frequency;
+            channels[0] = x_s.sin() / 10.0;
+            channels[1] = x_s.sin() / 10.0;
+        }
+        samples_written += data.len() / 2;
+    };
+
+    Ok(device.build_output_stream(&config, write_silence, print_error)?)
+}
 
 pub struct Audio {
     ring_buffer: ThreadShared<stereo::Stereo>,
 
     _host: cpal::Host,
 
-    pub sample_rate: u32,
+    pub sample_rate: usize,
 
     _input_stream: cpal::Stream,
-    // _output_stream: cpal::Stream,
+    _output_stream: Option<cpal::Stream>,
 }
 
 impl Deref for Audio {
@@ -111,27 +113,35 @@ impl Deref for Audio {
 }
 
 impl Audio {
-    pub fn new(size: usize) -> Result<Self, Error> {
-        let ring_buffer = ThreadShared::new(stereo::Stereo::new(size));
+    pub fn buffer_size(&self) -> usize {
+        self.ring_buffer.read().left.size
+    }
+
+    pub fn new(seconds: u32, echo: bool) -> Result<Self, Error> {
+        let sample_rate = 44100;
+        let buffer_size = usize::try_from(seconds).unwrap() * sample_rate; // TODO
+        let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
 
         let host = cpal::default_host();
 
-        let sample_rate = 44100;
-
         debug!("Initializing audio streams");
         let input_stream = init_input_stream(&host, sample_rate, &ring_buffer)?;
-        // let output_stream = init_output_stream(&host, sample_rate);
+        let output_stream = if echo {
+            Some(init_output_stream(&host, sample_rate)?)
+        } else {
+            None
+        };
 
         debug!("Running audio streams");
         input_stream.play()?;
-        // output_stream.play()?;
+        output_stream.as_ref().map(cpal::Stream::play).transpose()?;
 
         Ok(Audio {
             ring_buffer,
             _host: host,
             sample_rate,
             _input_stream: input_stream,
-            // _output_stream: output_stream,
+            _output_stream: output_stream,
         })
     }
 }

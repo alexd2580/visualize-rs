@@ -11,7 +11,7 @@ pub struct SurfaceInfo {
     pub surface_format: vk::SurfaceFormatKHR,
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub desired_present_mode: vk::PresentModeKHR,
-    pub desired_image_count: u32,
+    pub desired_image_count: usize,
     pub surface_resolution: vk::Extent2D,
 }
 
@@ -37,7 +37,7 @@ impl SurfaceInfo {
         // https://www.reddit.com/r/vulkan/comments/9txqqb/what_is_presentation_mode/
 
         let desired_present_mode = if vsync {
-            vk::PresentModeKHR::FIFO_RELAXED
+            vk::PresentModeKHR::FIFO
         } else {
             vk::PresentModeKHR::IMMEDIATE
         };
@@ -59,8 +59,8 @@ impl SurfaceInfo {
 
         // Try to get triple buffering, fall back to double-buffering.
         // Assuming all modern GPUs support double buffering.
-        let min_image_count = surface_capabilities.min_image_count;
-        let max_image_count = surface_capabilities.max_image_count;
+        let min_image_count = surface_capabilities.min_image_count as usize;
+        let max_image_count = surface_capabilities.max_image_count as usize;
         let mut desired_image_count = min_image_count + 1;
         if max_image_count != 0 && desired_image_count > max_image_count {
             desired_image_count = max_image_count;

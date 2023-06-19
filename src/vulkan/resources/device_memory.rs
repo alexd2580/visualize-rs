@@ -8,7 +8,7 @@ use super::device::Device;
 
 pub struct DeviceMemory {
     device: Rc<Device>,
-    size: vk::DeviceSize,
+    size: usize,
     memory: vk::DeviceMemory,
 }
 
@@ -24,11 +24,11 @@ impl DeviceMemory {
     pub unsafe fn new(
         memory_type_index: u32,
         device: &Rc<Device>,
-        size: vk::DeviceSize,
+        size: usize,
     ) -> Result<Rc<Self>, Error> {
         let device = device.clone();
         let memory_alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(size)
+            .allocation_size(vk::DeviceSize::try_from(size).unwrap())
             .memory_type_index(memory_type_index);
         let memory = device.allocate_memory(&memory_alloc_info, None)?;
         Ok(Rc::new(DeviceMemory {
@@ -38,7 +38,7 @@ impl DeviceMemory {
         }))
     }
 
-    pub fn size(&self) -> vk::DeviceSize {
+    pub fn size(&self) -> usize {
         self.size
     }
 }

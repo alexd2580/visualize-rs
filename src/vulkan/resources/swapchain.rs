@@ -34,7 +34,7 @@ impl Swapchain {
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(**surface)
-            .min_image_count(surface_info.desired_image_count)
+            .min_image_count(u32::try_from(surface_info.desired_image_count).unwrap())
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_info.surface_resolution)

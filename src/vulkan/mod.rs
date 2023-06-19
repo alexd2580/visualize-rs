@@ -25,8 +25,11 @@ pub enum Event {
     Resized,
 }
 
-enum Value {
+#[derive(Clone)]
+pub enum Value {
+    F32(f32),
     U32(u32),
+    Bool(bool),
 }
 
 type AvailableImages = HashMap<
@@ -317,7 +320,7 @@ impl Vulkan {
                     Box::new([vk::DescriptorBufferInfo::builder()
                         .buffer(***buffer)
                         .offset(0)
-                        .range(buffer.size)
+                        .range(vk::DeviceSize::try_from(buffer.size).unwrap())
                         .build()]),
                 )
             })
@@ -479,25 +482,20 @@ impl Vulkan {
             **self.image_acquired_semaphore,
             vk::Fence::null(),
         )?;
+        let present_index = usize::try_from(present_index).unwrap();
 
-        Ok((
-            present_index as usize,
-            **self.swapchain_images[present_index as usize],
-        ))
+        Ok((present_index, **self.swapchain_images[present_index]))
     }
 
     unsafe fn push_constants(
         &self,
         pipeline_layout: &PipelineLayout,
         shader_module: &ShaderModule,
+        push_constant_values: &HashMap<String, Value>,
     ) {
         if let Some(declaration) = shader_module.push_constants_declaration() {
-            // Prepare available fields.
-            let mut avail_fields = HashMap::new();
-            avail_fields.insert("frame_index".to_owned(), Value::U32(self.num_frames as u32));
-
             // Allocate constants memory.
-            let constants_size = declaration.byte_size().unwrap() as usize;
+            let constants_size = declaration.byte_size().unwrap();
             let mut constants = vec![0u8; constants_size];
             let constants_ptr = constants.as_mut_ptr();
 
@@ -506,16 +504,23 @@ impl Vulkan {
                 let offset = field.offset.unwrap_or_else(|| {
                     warn!("Assuming offset 0, does this work correctly?");
                     0
-                }) as usize;
+                });
 
                 if let Some(..) = field.dimensions {
                     warn!("Don't know how to handle {field:?}");
                 }
 
-                match avail_fields.get(&field.name) {
+                #[allow(clippy::cast_ptr_alignment)]
+                match push_constant_values.get(&field.name) {
                     None => error!("{} is not a registered push constant field", field.name),
+                    Some(Value::F32(value)) => {
+                        *constants_ptr.add(offset).cast::<f32>() = *value;
+                    }
                     Some(Value::U32(value)) => {
                         *constants_ptr.add(offset).cast::<u32>() = *value;
+                    }
+                    Some(Value::Bool(value)) => {
+                        *constants_ptr.add(offset).cast::<bool>() = *value;
                     } // _ => warn!("Don't know how to handle {field:?}"),
                 }
             }
@@ -548,8 +553,8 @@ impl Vulkan {
     unsafe fn dispatch(&self, shader_module: &ShaderModule) {
         let local_size = shader_module.local_size;
         let window_size = self.surface_info.surface_resolution;
-        let invocation_x = window_size.width / local_size.0;
-        let invocation_y = window_size.height / local_size.1;
+        let invocation_x = window_size.width / u32::try_from(local_size.0).unwrap();
+        let invocation_y = window_size.height / u32::try_from(local_size.1).unwrap();
         let invocation_z = 1; // Hardcode for now.
 
         self.device.cmd_dispatch(
@@ -561,10 +566,11 @@ impl Vulkan {
     }
 
     unsafe fn present(&self, present_index: usize) -> Result<(), Error> {
+        // TODO WHY DOES THIS WORK?!?!?! THIS MIGHT ACTUALLY CRASH?!
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&[**self.compute_complete_semaphore])
             .swapchains(&[***self.swapchain()])
-            .image_indices(&[present_index as u32])
+            .image_indices(&[u32::try_from(present_index).unwrap()])
             .build();
 
         Ok(self
@@ -577,7 +583,10 @@ impl Vulkan {
             })?)
     }
 
-    unsafe fn render_next_frame(&mut self) -> Result<Option<Event>, Error> {
+    unsafe fn render_next_frame(
+        &mut self,
+        push_constant_values: &HashMap<String, Value>,
+    ) -> Result<Option<Event>, Error> {
         let (present_index, present_image) = self.acquire_next_image()?;
 
         self.reuse_command_buffer_fence.wait()?;
@@ -592,6 +601,13 @@ impl Vulkan {
             vk::ImageLayout::GENERAL,
         );
 
+        // Prepare available fields.
+        let mut push_constant_values = push_constant_values.clone();
+        push_constant_values.insert(
+            "frame_index".to_owned(),
+            Value::U32(u32::try_from(self.num_frames).unwrap()),
+        );
+
         for index in 0..self.shader_resources.len() {
             let write_descriptor_set = self.shader_resources[index].get_write_descriptor_set(
                 &self.available_images,
@@ -603,7 +619,11 @@ impl Vulkan {
             let resources = &self.shader_resources[index];
 
             self.bind_pipeline(&resources.pipeline);
-            self.push_constants(&resources.pipeline_layout, &resources.shader_module);
+            self.push_constants(
+                &resources.pipeline_layout,
+                &resources.shader_module,
+                &push_constant_values,
+            );
             self.push_descriptors(&resources.pipeline_layout, &write_descriptor_set);
             self.dispatch(&resources.shader_module);
         }
@@ -638,9 +658,12 @@ impl Vulkan {
         }
     }
 
-    pub unsafe fn tick(&mut self) -> Result<Option<Event>, Error> {
+    pub unsafe fn tick(
+        &mut self,
+        push_constant_values: &HashMap<String, Value>,
+    ) -> Result<Option<Event>, Error> {
         self.transition_stale_images()?;
         self.recompile_shader_if_modified()?;
-        self.render_next_frame()
+        self.render_next_frame(push_constant_values)
     }
 }

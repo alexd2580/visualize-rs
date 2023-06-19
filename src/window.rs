@@ -1,3 +1,5 @@
+use std::{thread, time};
+
 use log::debug;
 
 use ash::vk::{self, SurfaceKHR as VkSurface};
@@ -6,14 +8,14 @@ use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
-    window::{Window as WinitWindow, WindowBuilder},
+    window::{Fullscreen, Window as WinitWindow, WindowBuilder},
 };
 
 use crate::error::Error;
 use crate::vulkan::resources::instance::Instance;
 
 pub trait App {
-    fn run_frame(&mut self) -> ControlFlow;
+    fn loop_body(&mut self) -> ControlFlow;
 }
 
 pub struct Window {
@@ -27,10 +29,21 @@ impl Window {
         debug!("Initializing video system");
 
         let event_loop = EventLoop::new();
+        // let monitor = event_loop
+        //     .available_monitors()
+        //     .next()
+        //     .ok_or_else(|| Error::Local("No monitors found?!".to_owned()))?;
+        //
+        // let mode = monitor
+        //     .video_modes()
+        //     .next()
+        //     .ok_or_else(|| Error::Local("Monitor doesn't have any modes?!".to_owned()))?;
+
         let logical_size = winit::dpi::LogicalSize::new(size.width, size.height);
         let window = WindowBuilder::new()
             .with_title("visualize-rs")
             .with_inner_size(logical_size)
+            .with_fullscreen(Some(Fullscreen::Borderless(None)))
             .build(&event_loop)?;
 
         Ok(Window {
@@ -65,19 +78,29 @@ impl Window {
     fn handle_event<T: App>(event: &Event<()>, app: &mut T) -> ControlFlow {
         match event {
             Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => ControlFlow::Exit,
+            Event::WindowEvent {
                 event:
-                    WindowEvent::CloseRequested
-                    | WindowEvent::KeyboardInput {
+                    WindowEvent::KeyboardInput {
                         input:
                             KeyboardInput {
                                 state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                                virtual_keycode: Some(key),
                                 ..
                             },
                         ..
                     },
                 ..
-            } => ControlFlow::Exit,
+            } => match key {
+                VirtualKeyCode::Escape | VirtualKeyCode::Q => ControlFlow::Exit,
+                VirtualKeyCode::K => {
+                    thread::sleep(time::Duration::from_secs(1));
+                    ControlFlow::Poll
+                }
+                _ => ControlFlow::Poll,
+            },
             Event::WindowEvent {
                 event: WindowEvent::Resized(..),
                 ..
@@ -85,7 +108,7 @@ impl Window {
                 // Ignoring window event. Resize handled via Vulkan.
                 ControlFlow::Poll
             }
-            Event::MainEventsCleared => app.run_frame(),
+            Event::MainEventsCleared => app.loop_body(),
             _ => ControlFlow::Poll,
         }
     }

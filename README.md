@@ -13,11 +13,10 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 
 # Future development
 
-* Audio input and processing
-* Fourier transforms
 * Visualizations
-* Beat/bpm detection
-* Mix and mash of different visualizations
+* Mix and match of different visualizations
+* Various "Improvements"
+* Cleanup of codebase
 
 # Current TODOs:
 
@@ -31,7 +30,13 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 - [x] Bind images in different binding modes, e.g. sampler vs storage_image
 - [x] Resize client images on resize. Static ~vs dynamic? Vulkan managed?~
 - [x] Improve sequence of vulkan high-level operations: swapchain reinit, image reinit, etc...
+- [x] Smoothing of input data, less stutter
+- [x] Beat detection
+- [x] BPM analysis
+- [x] Notice the importance of running a compositor when under X -_-
+- [ ] Better beat-effects. Check last_beat and next_beat
 - [ ] Exponentialize dft index on CPU side once?
+- [ ] use host_cached memory and flushes instead of _hoping_ that coherent writes work fine
 - [ ] Run the app even without pipeline etc, when no shaders are working from the get-go.
 - [ ] Better bloom? Using linear image samplers?
-- [ ] use host_cached memory and flushes instead of _hoping_ that coherent writes work fine
+- [ ] mix and match

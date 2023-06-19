@@ -14,12 +14,12 @@ use crate::{
 use super::shader_module::ShaderModule;
 
 fn write_descriptor_set_builder_stub(
-    descriptor_binding: u32,
+    descriptor_binding: usize,
     storage_type: vk::DescriptorType,
 ) -> vk::WriteDescriptorSetBuilder<'static> {
     vk::WriteDescriptorSet::builder()
         .descriptor_type(storage_type)
-        .dst_binding(descriptor_binding)
+        .dst_binding(u32::try_from(descriptor_binding).unwrap())
         .dst_array_element(0)
 }
 
@@ -29,7 +29,7 @@ pub struct DescriptorBinding {
     pub name: String,
 
     /// Binding index of the object (specified in the shader).
-    binding: u32,
+    binding: usize,
 
     /// The type of the underlying buffer/image.
     storage_type: vk::DescriptorType,
@@ -41,7 +41,7 @@ pub struct DescriptorBinding {
 impl DescriptorBinding {
     pub fn as_descriptor_set_layout_binding(&self) -> vk::DescriptorSetLayoutBinding {
         vk::DescriptorSetLayoutBinding {
-            binding: self.binding,
+            binding: u32::try_from(self.binding).unwrap(),
             descriptor_type: self.storage_type,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::COMPUTE,

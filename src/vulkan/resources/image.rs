@@ -6,11 +6,13 @@ use crate::error::Error;
 
 use super::{device::Device, surface_info::SurfaceInfo, swapchain::Swapchain};
 
+#[allow(clippy::module_name_repetitions)]
 pub struct RegularImage {
     device: Rc<Device>,
     image: vk::Image,
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct SwapchainImage {
     image: vk::Image,
 }
@@ -67,10 +69,11 @@ impl Image {
         Ok(images)
     }
 
-    pub unsafe fn get_required_memory_size(&self) -> Option<vk::DeviceSize> {
+    pub unsafe fn get_required_memory_size(&self) -> Option<usize> {
         match self {
             Image::Regular(RegularImage { device, image }) => {
-                Some(device.get_image_memory_requirements(*image).size)
+                let size = device.get_image_memory_requirements(*image).size;
+                Some(usize::try_from(size).unwrap())
             }
             Image::Swapchain(..) => None,
         }

@@ -58,11 +58,10 @@ impl<T: Clone + Copy + Default> RingBuffer<T> {
     /// wraparound)..write_index]`.
     pub fn write_to_pointer(&self, read_index: usize, write_index: usize, target: *mut c_void) {
         unsafe {
-            let size = self.size as u32;
-            *target.cast() = size;
+            *target.cast::<u32>() = u32::try_from(self.size).unwrap();
             let target = target.add(mem::size_of::<u32>());
 
-            *target.cast() = write_index as u32;
+            *target.cast::<u32>() = u32::try_from(write_index).unwrap();
             let target = target.add(mem::size_of::<u32>());
 
             if read_index <= write_index {

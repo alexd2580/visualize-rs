@@ -4,6 +4,11 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant, std140) uniform PushConstants {
     layout(offset = 0) uint frame_index;
+    layout(offset = 4) bool is_beat;
+    layout(offset = 8) uint beat_count;
+    layout(offset = 12) float now;
+    layout(offset = 16) float last_beat;
+    layout(offset = 20) float next_beat;
 };
 
 layout(rgba32f, binding = 0) uniform image2D intermediate;
@@ -11,6 +16,10 @@ layout(rgba32f, binding = 1) uniform image2D bloom_hv;
 layout(binding = 2) uniform sampler2D result_prev;
 layout(rgba32f, binding = 3) uniform image2D result;
 layout(rgba32f, binding = 4) uniform image2D present;
+
+vec3 make_color(float x) {
+    return vec3(sin(x), sin(x + 3.1415 * 2.0 / 3.0), sin(x + 3.1415 * 4.0 / 3.0)); //  / 2.0 + 0.5;
+}
 
 void main() {
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
@@ -33,7 +42,14 @@ void main() {
     // result = pow(result, vec3(1.0 / gamma));
 
     vec3 final_present = color + bloom;
-    vec3 final_result = 0.98 * prev + 0.02 * final_present;
+    vec3 final_result = 0.95 * prev + 0.05 * final_present;
     imageStore(result, ipixel, vec4(final_result, 1));
-    imageStore(present, ipixel, vec4(final_present + final_result, 1));
+
+    float since_beat = now - last_beat;
+    since_beat /= next_beat - last_beat;
+
+    vec3 beat_color = is_beat ? 0.4 * make_color(float(beat_count)): vec3(0.0);
+    beat_color = 0.001 * vec3(since_beat);
+
+    imageStore(present, ipixel, vec4(final_present + final_result + beat_color, 1));
 }

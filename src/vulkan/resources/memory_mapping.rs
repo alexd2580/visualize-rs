@@ -25,7 +25,12 @@ impl MemoryMapping {
         let device = device.clone();
         let memory = memory.clone();
         // https://stackoverflow.com/questions/64296581/do-i-need-to-memory-map-unmap-a-buffer-every-time-the-content-of-the-buffer-chan
-        let mapped = device.map_memory(**memory, 0, memory.size(), vk::MemoryMapFlags::empty())?;
+        let mapped = device.map_memory(
+            **memory,
+            0,
+            vk::DeviceSize::try_from(memory.size()).unwrap(),
+            vk::MemoryMapFlags::empty(),
+        )?;
 
         Ok(Rc::new(MemoryMapping {
             device,

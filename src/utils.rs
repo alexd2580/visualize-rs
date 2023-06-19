@@ -10,3 +10,7 @@ pub fn mtime(path: &Path) -> Result<FileTime, Error> {
     })?;
     Ok(FileTime::from_last_modification_time(&metadata))
 }
+
+pub fn mix(a: f32, b: f32, alpha: f32) -> f32 {
+    a * alpha + b * (1f32 - alpha)
+}

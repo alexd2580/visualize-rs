@@ -12,7 +12,7 @@ pub struct Dft {
     scratch: Vec<Complex<f32>>,
     output: Vec<Complex<f32>>,
 
-    simple: Vec<f32>,
+    pub simple: Vec<f32>,
 }
 
 impl Dft {
@@ -50,27 +50,30 @@ impl Dft {
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.input.len()
+    }
+
     pub fn get_input_vec(&mut self) -> &mut [f32] {
         &mut self.input
     }
 
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
-            let size = self.simple.len() as u32;
-            *target.cast() = size;
+            let size = self.simple.len();
+            *target.cast::<u32>() = u32::try_from(size).unwrap();
             let target = target.add(mem::size_of::<i32>());
 
-            self.simple.as_ptr().copy_to(target.cast(), size as usize);
-        }
-    }
-
-    pub fn apply_hamming(&mut self) {
-        for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
-            *val *= factor;
+            self.simple.as_ptr().copy_to(target.cast(), size);
         }
     }
 
     pub fn run_transform(&mut self) {
+        // Hamming window for smoother DFT results.
+        for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
+            *val *= factor;
+        }
+
         self.r2c
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
             .unwrap();

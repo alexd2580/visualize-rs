@@ -7,7 +7,7 @@ use crate::error::Error;
 use super::device::Device;
 
 pub struct Buffer {
-    pub size: vk::DeviceSize,
+    pub size: usize,
     device: Rc<Device>,
     buffer: vk::Buffer,
 }
@@ -21,10 +21,10 @@ impl Deref for Buffer {
 }
 
 impl Buffer {
-    pub unsafe fn new(device: &Rc<Device>, size: vk::DeviceSize) -> Result<Rc<Self>, Error> {
+    pub unsafe fn new(device: &Rc<Device>, size: usize) -> Result<Rc<Self>, Error> {
         let device = device.clone();
         let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(size)
+            .size(vk::DeviceSize::try_from(size).unwrap())
             .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = device.create_buffer(&buffer_create_info, None)?;
@@ -36,8 +36,8 @@ impl Buffer {
         }))
     }
 
-    pub unsafe fn get_required_memory_size(&self) -> vk::DeviceSize {
-        self.device.get_buffer_memory_requirements(**self).size
+    pub unsafe fn get_required_memory_size(&self) -> usize {
+        usize::try_from(self.device.get_buffer_memory_requirements(**self).size).unwrap()
     }
 }
 

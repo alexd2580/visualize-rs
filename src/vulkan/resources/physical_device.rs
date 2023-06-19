@@ -12,7 +12,7 @@ use super::{instance::Instance, surface::Surface};
 
 fn choose_compute_queue_family(
     _physical_device: vk::PhysicalDevice,
-    index: usize,
+    index: u32,
     queue_family_properties: &vk::QueueFamilyProperties,
 ) -> Option<u32> {
     let queue_flags = queue_family_properties.queue_flags;
@@ -20,7 +20,7 @@ fn choose_compute_queue_family(
     let does_not_support_graphics = queue_flags.not().contains(vk::QueueFlags::GRAPHICS);
 
     if supports_compute && does_not_support_graphics {
-        Some(index as u32)
+        Some(index)
     } else {
         None
     }
@@ -39,7 +39,11 @@ unsafe fn choose_physical_device_queue(
             .iter()
             .enumerate()
             .find_map(|(index, queue_family_props)| {
-                choose_compute_queue_family(physical_device, index, queue_family_props)
+                choose_compute_queue_family(
+                    physical_device,
+                    u32::try_from(index).unwrap(),
+                    queue_family_props,
+                )
             })?;
 
     Some((physical_device, compute_queue_family_index))
@@ -60,23 +64,23 @@ impl Deref for PhysicalDevice {
     }
 }
 
-fn choose_buffer_memory_type(index: usize, memory_type: vk::MemoryType) -> Option<u32> {
+fn choose_buffer_memory_type(index: u32, memory_type: vk::MemoryType) -> Option<u32> {
     let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL
         | vk::MemoryPropertyFlags::HOST_VISIBLE
         | vk::MemoryPropertyFlags::HOST_COHERENT;
 
     if memory_type.property_flags.contains(desired_flags) {
-        Some(index as u32)
+        Some(index)
     } else {
         None
     }
 }
 
-fn choose_image_memory_type(index: usize, memory_type: vk::MemoryType) -> Option<u32> {
+fn choose_image_memory_type(index: u32, memory_type: vk::MemoryType) -> Option<u32> {
     let desired_flags = vk::MemoryPropertyFlags::DEVICE_LOCAL;
 
     if memory_type.property_flags.contains(desired_flags) {
-        Some(index as u32)
+        Some(index)
     } else {
         None
     }
@@ -98,13 +102,17 @@ impl PhysicalDevice {
         let buffer_memory_type_index = memory_types
             .iter()
             .enumerate()
-            .find_map(|(index, memory_type)| choose_buffer_memory_type(index, *memory_type))
+            .find_map(|(index, memory_type)| {
+                choose_buffer_memory_type(u32::try_from(index).unwrap(), *memory_type)
+            })
             .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
 
         let image_memory_type_index = memory_types
             .iter()
             .enumerate()
-            .find_map(|(index, memory_type)| choose_image_memory_type(index, *memory_type))
+            .find_map(|(index, memory_type)| {
+                choose_image_memory_type(u32::try_from(index).unwrap(), *memory_type)
+            })
             .ok_or_else(|| Error::Local("Couldn't find suitable memory type".to_owned()))?;
 
         Ok(Rc::new(PhysicalDevice {
@@ -119,7 +127,7 @@ impl PhysicalDevice {
 // fn choose_render_queue_family(
 //     surface: &Surface,
 //     physical_device: vk::PhysicalDevice,
-//     (index, queue_family_properties): (usize, &vk::QueueFamilyProperties),
+//     (index, queue_family_properties): (u32, &vk::QueueFamilyProperties),
 // ) -> Option<u32> {
 //     let supports_graphics = queue_family_properties
 //         .queue_flags

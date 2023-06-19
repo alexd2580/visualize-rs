@@ -1,6 +1,5 @@
 use std::{ffi::c_void, ops::Deref, rc::Rc};
 
-use ash::vk;
 use log::debug;
 
 use crate::error::Error;
@@ -13,6 +12,7 @@ use super::{
     Vulkan,
 };
 
+#[allow(clippy::module_name_repetitions)]
 pub struct MultiBufferUnit {
     pub buffer: Rc<Buffer>,
     pub memory: Rc<DeviceMemory>,
@@ -23,7 +23,7 @@ impl MultiBufferUnit {
     pub unsafe fn new(
         physical_device: &PhysicalDevice,
         device: &Rc<Device>,
-        size: vk::DeviceSize,
+        size: usize,
     ) -> Result<Self, Error> {
         let buffer = Buffer::new(device, size)?;
         let memory = DeviceMemory::new(
@@ -60,7 +60,7 @@ impl MultiBuffer {
     pub unsafe fn new(
         physical_device: &Rc<PhysicalDevice>,
         device: &Rc<Device>,
-        size: vk::DeviceSize,
+        size: usize,
         num_buffers: usize,
     ) -> Result<Rc<Self>, Error> {
         debug!("Creating buffer of size {}", size);
@@ -85,11 +85,11 @@ impl Vulkan {
     pub fn new_multi_buffer(
         &mut self,
         name: &str,
-        size: vk::DeviceSize,
+        size: usize,
         num_buffers: Option<usize>,
     ) -> Result<Rc<MultiBuffer>, Error> {
         unsafe {
-            let num_buffers = num_buffers.unwrap_or(self.surface_info.desired_image_count as usize);
+            let num_buffers = num_buffers.unwrap_or(self.surface_info.desired_image_count);
             let buffer = MultiBuffer::new(&self.physical_device, &self.device, size, num_buffers)?;
             let buffers = buffer
                 .iter()

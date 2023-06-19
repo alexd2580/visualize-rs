@@ -13,6 +13,7 @@ use super::{
     Vulkan,
 };
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone)]
 pub struct MultiImageUnit {
     pub image: Rc<Image>,
@@ -97,7 +98,7 @@ impl Vulkan {
         num_images: Option<usize>,
     ) -> Result<Rc<MultiImage>, Error> {
         unsafe {
-            let num_images = num_images.unwrap_or(self.surface_info.desired_image_count as usize);
+            let num_images = num_images.unwrap_or(self.surface_info.desired_image_count);
             let image = MultiImage::new(
                 &self.physical_device,
                 &self.device,
