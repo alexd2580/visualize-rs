@@ -39,8 +39,8 @@ struct BeatAnalysis {
 
     // Timestamps of the last N detected beats.
     beat_timestamps: Vec<time::Instant>,
-    // Estimated BPM.
-    bpm: f32,
+    // Estimated BPM, but in seconds-per-beat format.
+    spb: f32,
 }
 
 fn wrap_index(pos_offset: usize, neg_offset: usize, len: usize) -> usize {
@@ -76,7 +76,7 @@ impl BeatAnalysis {
             is_beat: false,
             beat_count: 0,
             beat_timestamps,
-            bpm: 60f32,
+            spb: 0.1666,
         }
     }
 
@@ -135,12 +135,12 @@ impl BeatAnalysis {
                 }
             }
 
-            let (bpm, _) =
+            let (spb_sum, count) =
                 clusters
                     .into_iter()
                     .fold((f32::INFINITY, 0), |a, b| if a.1 > b.1 { a } else { b });
 
-            self.bpm = bpm;
+            self.spb = spb_sum / count as f32;
         }
         self.is_beat = is_beat;
 
@@ -161,7 +161,7 @@ impl BeatAnalysis {
     }
 
     fn next_beat(&self) -> time::Instant {
-        self.last_beat() + time::Duration::from_secs_f32(1f32 / (60f32 * self.bpm))
+        self.last_beat() + time::Duration::from_secs_f32(self.spb)
     }
 }
 
@@ -375,14 +375,10 @@ impl Visualizer {
             "now".to_owned(),
             vulkan::Value::F32(self.epoch.elapsed().as_secs_f32()),
         );
-        push_constant_values.insert(
-            "last_beat".to_owned(),
-            vulkan::Value::F32((self.beat_analysis.last_beat() - self.epoch).as_secs_f32()),
-        );
-        push_constant_values.insert(
-            "next_beat".to_owned(),
-            vulkan::Value::F32((self.beat_analysis.next_beat() - self.epoch).as_secs_f32()),
-        );
+        let last_beat = (self.beat_analysis.last_beat() - self.epoch).as_secs_f32();
+        push_constant_values.insert("last_beat".to_owned(), vulkan::Value::F32(last_beat));
+        let next_beat = (self.beat_analysis.next_beat() - self.epoch).as_secs_f32();
+        push_constant_values.insert("next_beat".to_owned(), vulkan::Value::F32(next_beat));
 
         match unsafe { self.vulkan.tick(&push_constant_values)? } {
             None => (),
@@ -505,9 +501,7 @@ struct Args {
     vsync: bool,
 }
 
-fn run_main() -> Result<(), Error> {
-    let args = Args::parse();
-
+fn run_main(args: Args) -> Result<(), Error> {
     let initial_size = vk::Extent2D {
         width: 1280,
         height: 1024,
@@ -526,7 +520,8 @@ fn run_main() -> Result<(), Error> {
 fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
     log::info!("Initializing...");
-    if let Err(err) = run_main() {
+    let args = Args::parse();
+    if let Err(err) = run_main(args) {
         error!("{}", err);
     }
     log::info!("Terminating...");

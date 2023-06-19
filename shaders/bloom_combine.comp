@@ -47,9 +47,11 @@ void main() {
 
     float since_beat = now - last_beat;
     since_beat /= next_beat - last_beat;
+    float until_beat = next_beat - now;
+    until_beat /= next_beat - last_beat;
 
-    vec3 beat_color = is_beat ? 0.4 * make_color(float(beat_count)): vec3(0.0);
-    beat_color = 0.001 * vec3(since_beat);
+    // vec3 beat_color = is_beat ? 0.4 * make_color(float(beat_count)): vec3(0.0);
+    vec3 beat_color = 0.5 * max(vec3(0), vec3(since_beat, 0, until_beat));
 
     imageStore(present, ipixel, vec4(final_present + final_result + beat_color, 1));
 }
