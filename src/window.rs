@@ -2,13 +2,13 @@ use std::{thread, time};
 
 use log::debug;
 
-use ash::vk::{self, SurfaceKHR as VkSurface};
+use ash::vk::SurfaceKHR as VkSurface;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
-    window::{Fullscreen, Window as WinitWindow, WindowBuilder},
+    window::{Window as WinitWindow, WindowBuilder},
 };
 
 use crate::error::Error;
@@ -19,38 +19,20 @@ pub trait App {
 }
 
 pub struct Window {
-    pub size: vk::Extent2D,
     event_loop: EventLoop<()>,
     window: WinitWindow,
 }
 
 impl Window {
-    pub fn new(size: vk::Extent2D) -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         debug!("Initializing video system");
 
         let event_loop = EventLoop::new();
-        // let monitor = event_loop
-        //     .available_monitors()
-        //     .next()
-        //     .ok_or_else(|| Error::Local("No monitors found?!".to_owned()))?;
-        //
-        // let mode = monitor
-        //     .video_modes()
-        //     .next()
-        //     .ok_or_else(|| Error::Local("Monitor doesn't have any modes?!".to_owned()))?;
-
-        let logical_size = winit::dpi::LogicalSize::new(size.width, size.height);
         let window = WindowBuilder::new()
             .with_title("visualize-rs")
-            .with_inner_size(logical_size)
-            .with_fullscreen(Some(Fullscreen::Borderless(None)))
             .build(&event_loop)?;
 
-        Ok(Window {
-            size,
-            event_loop,
-            window,
-        })
+        Ok(Window { event_loop, window })
     }
 
     pub fn enumerate_required_extensions(&self) -> Result<Vec<*const i8>, Error> {

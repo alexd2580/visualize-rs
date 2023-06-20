@@ -501,15 +501,11 @@ struct Args {
     vsync: bool,
 }
 
-fn run_main(args: Args) -> Result<(), Error> {
-    let initial_size = vk::Extent2D {
-        width: 1280,
-        height: 1024,
-    };
-    let mut window = window::Window::new(initial_size)?;
+fn run_main(args: &Args) -> Result<(), Error> {
+    let mut window = window::Window::new()?;
 
     {
-        let mut visualizer = Visualizer::new(&window, &args)?;
+        let mut visualizer = Visualizer::new(&window, args)?;
         log::info!("Running...");
         window.run_main_loop(&mut visualizer);
     }
@@ -521,7 +517,7 @@ fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
     log::info!("Initializing...");
     let args = Args::parse();
-    if let Err(err) = run_main(args) {
+    if let Err(err) = run_main(&args) {
         error!("{}", err);
     }
     log::info!("Terminating...");
