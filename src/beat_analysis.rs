@@ -22,6 +22,9 @@ pub struct BeatAnalysis {
     // Whether there is currentle an extraordinary signal energy.
     pub is_beat: bool,
     pub matches_bpm: bool,
+    pub last_bpm_beat: time::Instant,
+    pub next_bpm_beat: time::Instant,
+
     // Absolute beat count.
     pub beat_count: usize,
 
@@ -69,6 +72,8 @@ impl BeatAnalysis {
             standard_deviation: 0f32,
             is_beat: false,
             matches_bpm: false,
+            last_bpm_beat: time::Instant::now(),
+            next_bpm_beat: time::Instant::now() + time::Duration::from_secs(1),
             beat_count: 0,
             beat_timestamps,
             spb: 0.1666,
@@ -103,9 +108,9 @@ impl BeatAnalysis {
 
         let was_beat = self.is_beat;
         self.is_beat = not_noise && loud_outlier;
+        let rising_edge = !was_beat && self.is_beat;
 
-        // Register the beat on the rising edge.
-        if !was_beat && self.is_beat {
+        if rising_edge {
             let len = self.beat_timestamps.len();
             let idx = wrap_index(self.beat_count, 0, len);
             self.beat_timestamps[idx] = time::Instant::now();
@@ -156,6 +161,11 @@ impl BeatAnalysis {
         let next_dist = (now.max(next_beat) - now.min(next_beat)).as_secs_f32();
         let beat_dist = last_dist.min(next_dist);
         self.matches_bpm = beat_dist / self.spb < 0.025;
+
+        if rising_edge && self.matches_bpm {
+            self.last_bpm_beat = time::Instant::now();
+            self.next_bpm_beat = time::Instant::now() + time::Duration::from_secs_f32(self.spb);
+        }
     }
 
     fn bps(&self) -> f32 {

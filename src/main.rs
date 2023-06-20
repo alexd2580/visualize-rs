@@ -103,7 +103,7 @@ impl Visualizer {
         // TODO dynamic?
         let frame_rate = 60;
 
-        let audio = audio::Audio::new(args.audio_buffer_sec, false)?;
+        let audio = audio::Audio::new(args.audio_buffer_sec, true)?;
         let audio_buffer_size = audio.buffer_size();
         let audio_buffer_bytes = audio_buffer_size * mem::size_of::<f32>();
         let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
@@ -225,9 +225,9 @@ impl Visualizer {
         push_constant_values.insert("beat_count".to_owned(), U32(beat_count));
         let now = self.epoch.elapsed().as_secs_f32();
         push_constant_values.insert("now".to_owned(), F32(now));
-        let last_beat = (self.beat_analysis.last_beat() - self.epoch).as_secs_f32();
+        let last_beat = (self.beat_analysis.last_bpm_beat - self.epoch).as_secs_f32();
         push_constant_values.insert("last_beat".to_owned(), F32(last_beat));
-        let next_beat = (self.beat_analysis.next_beat() - self.epoch).as_secs_f32();
+        let next_beat = (self.beat_analysis.next_bpm_beat - self.epoch).as_secs_f32();
         push_constant_values.insert("next_beat".to_owned(), F32(next_beat));
 
         match unsafe { self.vulkan.tick(&push_constant_values)? } {

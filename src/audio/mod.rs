@@ -1,10 +1,10 @@
 use std::ops::Deref;
 
-use log::debug;
+use log::{debug, warn};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::{error::Error, thread_shared::ThreadShared};
+use crate::{audio::stereo::Stereo, error::Error, thread_shared::ThreadShared};
 
 pub mod high_pass;
 pub mod low_pass;
@@ -34,74 +34,13 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
         .ok_or_else(|| Error::Local("Failed to choose stream config".to_owned()))
 }
 
-fn init_input_stream(
-    host: &cpal::Host,
-    desired_sample_rate: usize,
-    buffer: &ThreadShared<stereo::Stereo>,
-) -> Result<cpal::Stream, Error> {
-    let buffer = buffer.clone();
-
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| Error::Local("Failed to get default input device.".to_owned()))?;
-    let desired_sample_format = cpal::SampleFormat::F32;
-    let config = choose_stream_config(
-        device.supported_input_configs()?,
-        2,
-        cpal::SampleRate(u32::try_from(desired_sample_rate).unwrap()),
-        desired_sample_format,
-    )?;
-
-    let print_error = |err| eprintln!("Audio input error: {err}");
-
-    let read =
-        move |samples: &[f32], _: &cpal::InputCallbackInfo| buffer.write().write_samples(samples);
-
-    Ok(device.build_input_stream(&config, read, print_error)?)
-}
-
-fn init_output_stream(
-    host: &cpal::Host,
-    desired_sample_rate: usize,
-) -> Result<cpal::Stream, Error> {
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| Error::Local("Failed to get default output device.".to_owned()))?;
-    let desired_sample_format = cpal::SampleFormat::F32;
-    let config = choose_stream_config(
-        device.supported_output_configs()?,
-        2,
-        cpal::SampleRate(u32::try_from(desired_sample_rate).unwrap()),
-        desired_sample_format,
-    )?;
-
-    let print_error = |err| eprintln!("Audio output error: {err}");
-
-    let mut samples_written = 0;
-    let write_silence = move |data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
-        let frequency = 200.0;
-        for (index, channels) in data.chunks_mut(2).enumerate() {
-            let x_s = (samples_written + index) as f32 / 44100.0
-                * (2.0 * std::f32::consts::PI)
-                * frequency;
-            channels[0] = x_s.sin() / 10.0;
-            channels[1] = x_s.sin() / 10.0;
-        }
-        samples_written += data.len() / 2;
-    };
-
-    Ok(device.build_output_stream(&config, write_silence, print_error)?)
-}
-
 pub struct Audio {
+    host: cpal::Host,
+    pub sample_rate: usize,
     ring_buffer: ThreadShared<stereo::Stereo>,
 
-    _host: cpal::Host,
-
-    pub sample_rate: usize,
-
-    _input_stream: cpal::Stream,
-    _output_stream: Option<cpal::Stream>,
+    input_stream: Option<cpal::Stream>,
+    output_stream: Option<cpal::Stream>,
 }
 
 impl Deref for Audio {
@@ -117,31 +56,171 @@ impl Audio {
         self.ring_buffer.read().left.size
     }
 
+    fn input_device(&self) -> Result<cpal::Device, Error> {
+        self.host
+            .default_input_device()
+            .ok_or_else(|| Error::Local("Failed to get default input device.".to_owned()))
+    }
+
+    fn run_input_stream<Callback>(&self, callback: Callback) -> Result<cpal::Stream, Error>
+    where
+        Callback: FnMut(&[f32], &cpal::InputCallbackInfo) + Send + 'static,
+    {
+        let device = self.input_device()?;
+        let config = choose_stream_config(
+            device.supported_input_configs()?,
+            2,
+            cpal::SampleRate(u32::try_from(self.sample_rate).unwrap()),
+            cpal::SampleFormat::F32,
+        )?;
+
+        let print_error = |err| eprintln!("Audio input error: {err}");
+        let stream = device.build_input_stream(&config, callback, print_error)?;
+        stream.play()?;
+        Ok(stream)
+    }
+
+    fn init_input_stream(&mut self) -> Result<(), Error> {
+        debug!("Initializing input stream");
+        let buffer = self.ring_buffer.clone();
+        let read = move |samples: &[f32], _: &cpal::InputCallbackInfo| {
+            buffer.write().write_samples(samples);
+        };
+        self.input_stream = Some(self.run_input_stream(read)?);
+        Ok(())
+    }
+
+    fn output_device(&self) -> Result<cpal::Device, Error> {
+        self.host
+            .default_output_device()
+            .ok_or_else(|| Error::Local("Failed to get default output device.".to_owned()))
+    }
+
+    fn run_output_stream<Callback>(&self, callback: Callback) -> Result<cpal::Stream, Error>
+    where
+        Callback: FnMut(&mut [f32], &cpal::OutputCallbackInfo) + Send + 'static,
+    {
+        let device = self.output_device()?;
+        let config = choose_stream_config(
+            device.supported_output_configs()?,
+            2,
+            cpal::SampleRate(u32::try_from(self.sample_rate).unwrap()),
+            cpal::SampleFormat::F32,
+        )?;
+
+        let print_error = |err| eprintln!("Audio output error: {err}");
+        let stream = device.build_output_stream(&config, callback, print_error)?;
+        stream.play()?;
+        Ok(stream)
+    }
+
+    fn init_output_stream(&mut self) -> Result<(), Error> {
+        debug!("Initializing output stream");
+        let buffer = self.ring_buffer.clone();
+        let mut read_index = 0;
+        let mut insert_delay_samples = 5000;
+        // If we want to delay the input stream, then we need to be able to do so.
+        assert!(2 * insert_delay_samples < buffer.read().left.size);
+
+        // TODO handle callbackinfo
+        let write = move |mut data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
+            let mut data_num_samples = data.len() / 2;
+
+            if insert_delay_samples > 0 {
+                let how_many = insert_delay_samples.min(data_num_samples);
+                data[0..2 * how_many].fill(0.0);
+                insert_delay_samples -= how_many;
+
+                data = &mut data[2 * how_many..];
+                data_num_samples = data.len() / 2;
+            }
+
+            // No more delay samples.
+            let Stereo { left, right } = buffer.read();
+            let read_buf_size = left.size;
+
+            // Unfurled write index.
+            let write_index = if left.write_index < read_index {
+                left.write_index + read_buf_size
+            } else {
+                left.write_index
+            };
+            // Where would i end up in the read_buffer after reading `data_num_samples`.
+            let read_end_index = read_index + data_num_samples;
+            if read_end_index > write_index {
+                let underrun = read_end_index - write_index;
+                warn!("Audio sample underrun by {underrun} samples, filling with 0es.");
+                let fill_samples = underrun.min(data_num_samples);
+                data[..2 * fill_samples].fill(0.0);
+                data = &mut data[2 * fill_samples..];
+                data_num_samples = data.len() / 2;
+            }
+
+            if read_index + data_num_samples <= read_buf_size {
+                // Case where we can read one continuous stretch of samples.
+                for sample_index in 0..data_num_samples {
+                    let buffer_index = read_index + sample_index;
+                    data[2 * sample_index] = left.data[buffer_index];
+                    data[2 * sample_index + 1] = right.data[buffer_index];
+                }
+
+                // Wrap read_index around.
+                read_index = if read_index + data_num_samples == read_buf_size {
+                    0
+                } else {
+                    read_index + data_num_samples
+                };
+            } else {
+                // Case where sample stretch wraps around in ring buffer.
+                let pt1 = left.size - read_index;
+                let pt2 = data_num_samples - pt1;
+                assert!(pt1 + pt2 == data_num_samples);
+
+                for sample_index in 0..pt1 {
+                    let buffer_index = read_index + sample_index;
+                    data[2 * sample_index] = left.data[buffer_index];
+                    data[2 * sample_index + 1] = right.data[buffer_index];
+                }
+
+                data = &mut data[2 * pt1..];
+                data_num_samples = data.len() / 2;
+                assert!(data_num_samples == pt2);
+
+                for sample_index in 0..pt2 {
+                    let buffer_index = sample_index;
+                    data[2 * sample_index] = left.data[buffer_index];
+                    data[2 * sample_index + 1] = right.data[buffer_index];
+                }
+
+                // Move read index to end of read part.
+                read_index = pt2;
+            }
+        };
+
+        self.output_stream = Some(self.run_output_stream(write)?);
+        Ok(())
+    }
+
     pub fn new(seconds: u32, echo: bool) -> Result<Self, Error> {
+        let host = cpal::default_host();
+
         let sample_rate = 44100;
         let buffer_size = usize::try_from(seconds).unwrap() * sample_rate; // TODO
         let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
 
-        let host = cpal::default_host();
-
-        debug!("Initializing audio streams");
-        let input_stream = init_input_stream(&host, sample_rate, &ring_buffer)?;
-        let output_stream = if echo {
-            Some(init_output_stream(&host, sample_rate)?)
-        } else {
-            None
+        let mut audio = Audio {
+            host,
+            sample_rate,
+            ring_buffer,
+            input_stream: None,
+            output_stream: None,
         };
 
-        debug!("Running audio streams");
-        input_stream.play()?;
-        output_stream.as_ref().map(cpal::Stream::play).transpose()?;
+        audio.init_input_stream()?;
+        if echo {
+            audio.init_output_stream()?;
+        }
 
-        Ok(Audio {
-            ring_buffer,
-            _host: host,
-            sample_rate,
-            _input_stream: input_stream,
-            _output_stream: output_stream,
-        })
+        Ok(audio)
     }
 }
