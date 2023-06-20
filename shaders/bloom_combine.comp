@@ -9,6 +9,7 @@ layout(push_constant, std140) uniform PushConstants {
     layout(offset = 12) float now;
     layout(offset = 16) float last_beat;
     layout(offset = 20) float next_beat;
+    layout(offset = 24) bool matches_bpm;
 };
 
 layout(rgba32f, binding = 0) uniform image2D intermediate;
@@ -26,9 +27,13 @@ void main() {
     ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
     vec2 pixel = vec2(ipixel) / iimage_size;
 
-    vec3 prev = texture(result_prev, pixel + 0.01 * vec2(sin(0.002 * frame_index), cos(0.001999999 * frame_index))).rgb;
     vec3 color = imageLoad(intermediate, ipixel).rgb;
     vec3 bloom = imageLoad(bloom_hv, ipixel).rgb;
+    vec3 active_image = color + bloom;
+
+    vec3 prev = texture(result_prev, pixel + 0.005 * vec2(sin(0.002 * frame_index), cos(0.001999999 * frame_index))).rgb;
+    vec3 store_prev = 0.96 * prev + 0.04 * active_image;
+    imageStore(result, ipixel, vec4(store_prev, 1));
 
     // additive blending
     // color += bloom;
@@ -41,17 +46,14 @@ void main() {
     // const float gamma = 2.2;
     // result = pow(result, vec3(1.0 / gamma));
 
-    vec3 final_present = color + bloom;
-    vec3 final_result = 0.95 * prev + 0.05 * final_present;
-    imageStore(result, ipixel, vec4(final_result, 1));
+    // float since_beat = now - last_beat;
+    // since_beat /= next_beat - last_beat;
+    // float until_beat = next_beat - now;
+    // until_beat /= next_beat - last_beat;
+    // vec3 beat_color = 0.5 * max(vec3(0), vec3(since_beat, 0, until_beat));
 
-    float since_beat = now - last_beat;
-    since_beat /= next_beat - last_beat;
-    float until_beat = next_beat - now;
-    until_beat /= next_beat - last_beat;
+    vec3 beat_color = (matches_bpm) ? make_color(float(beat_count)): vec3(0.0);
 
-    // vec3 beat_color = is_beat ? 0.4 * make_color(float(beat_count)): vec3(0.0);
-    vec3 beat_color = 0.5 * max(vec3(0), vec3(since_beat, 0, until_beat));
-
-    imageStore(present, ipixel, vec4(final_present + final_result + beat_color, 1));
+    vec3 store_present = active_image + 0.4 * prev + 0.4 * beat_color;
+    imageStore(present, ipixel, vec4(store_present, 1));
 }

@@ -394,8 +394,9 @@ impl DescriptorInfo for BlockDeclaration {
     }
 }
 
+/// Alignment cannot be less than 4. Even booleans should be aligned to 4 bytes...
 fn alignment(x: usize) -> usize {
-    let exp = (x as f32).log2().ceil() as u32;
+    let exp = ((x as f32).log2().ceil() as u32).max(2);
     2usize.pow(exp)
 }
 
