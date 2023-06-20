@@ -1,0 +1,3 @@
+[alias]
+runx = ["run", "--", "-s", "shaders/high_low_dft.comp", "shaders/bloom_h.comp", "shaders/bloom_v.comp", "shaders/bloom_combine.comp"]
+lint = ["clippy", "--", "-W", "clippy::pedantic", "-A", "clippy::cast_precision_loss", "-A", "clippy::cast_sign_loss", "-A", "clippy::cast_possible_truncation"]

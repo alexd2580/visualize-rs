@@ -7,8 +7,15 @@ Rewrite of [oscilloscope-visualizer](https://github.com/alexd2580/oscilloscope-v
 # Running
 
 ```bash
-# It's rust....
-cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.comp shaders/bloom_combine.comp
+# It's rust.... not the 'x', it's an alias.
+cargo runx
+```
+
+# Linting
+
+```bash
+# Is pedantic about stuff, but also disables some obnoxious lints.
+cargo lint
 ```
 
 # Future development
