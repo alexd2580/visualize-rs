@@ -40,3 +40,5 @@ cargo run -- -s shaders/high_low_dft.comp shaders/bloom_h.comp shaders/bloom_v.c
 - [ ] Run the app even without pipeline etc, when no shaders are working from the get-go.
 - [ ] Better bloom? Using linear image samplers?
 - [ ] mix and match
+- [ ] Document the installation process and requirements
+- [ ] Check that glslc is present.... use native impl? does it exist? shaderc-rs?
