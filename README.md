@@ -42,8 +42,8 @@ cargo lint
 - [x] BPM analysis
 - [x] Notice the importance of running a compositor when under X -_-
 - [x] Audio passthrough with delay
-- [ ] Passthrough selector
-- [ ] Automatic pulse null-sink setup and restore on exit
+- [x] Passthrough selector
+- [x] Automatic pulse null-sink setup and audio routing and restore on exit
 - [ ] Revise BPM and beat detection.
 - [ ] Better beat-effects. Check last_beat and next_beat
 - [ ] Exponentialize dft index on CPU side once?

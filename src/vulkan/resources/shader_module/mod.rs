@@ -5,14 +5,13 @@ use std::{
     io::{self, Cursor},
     ops::Deref,
     path::{Path, PathBuf},
-    process::Command,
     rc::Rc,
-    slice, str,
+    slice,
 };
 
 use ash::vk;
 
-use crate::error::Error;
+use crate::{error::Error, utils::exec_command};
 
 use self::analysis::DescriptorInfo;
 
@@ -76,15 +75,7 @@ pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
 }
 
 fn compile_shader_file(file: &Path) -> Result<Vec<u32>, Error> {
-    let res = Command::new("glslc")
-        .args([file.to_str().unwrap(), "-o", "shaders/out.spv"])
-        .output()?;
-
-    if res.status.code() != Some(0) {
-        let msg = str::from_utf8(&res.stderr).unwrap().to_owned();
-        return Err(Error::Local(msg));
-    }
-
+    exec_command(&["glslc", file.to_str().unwrap(), "-o", "shaders/out.spv"])?;
     let mut shader_spirv_bytes = Cursor::new(fs::read("shaders/out.spv")?);
     Ok(read_spv(&mut shader_spirv_bytes)?)
 }

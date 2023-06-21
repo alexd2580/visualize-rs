@@ -103,7 +103,7 @@ impl Visualizer {
         // TODO dynamic?
         let frame_rate = 60;
 
-        let audio = audio::Audio::new(args.audio_buffer_sec, true)?;
+        let audio = audio::Audio::new(args.audio_buffer_sec, args.passthrough)?;
         let audio_buffer_size = audio.buffer_size();
         let audio_buffer_bytes = audio_buffer_size * mem::size_of::<f32>();
         let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
@@ -349,6 +349,9 @@ struct Args {
     /// Enable vsync
     #[arg(short, long, default_value = "true", action = clap::ArgAction::Set)]
     vsync: bool,
+
+    #[arg(short, long, default_value = "true", action = clap::ArgAction::Set)]
+    passthrough: bool,
 }
 
 fn run_main(args: &Args) -> Result<(), Error> {

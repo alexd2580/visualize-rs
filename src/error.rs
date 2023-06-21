@@ -15,6 +15,7 @@ pub enum Error {
     Io(std::io::Error),
     Parse(glsl::parser::ParseError),
     Cpal(Cpal),
+    Pulsectl(pulsectl::ControllerError),
 }
 
 impl Display for Error {
@@ -22,12 +23,13 @@ impl Display for Error {
         match self {
             Error::Local(str) => write!(f, "{str}"),
             Error::Vk(code) => write!(f, "{code}"),
-            Error::Os(os_error) => write!(f, "OS Error\n{os_error}"),
-            Error::Io(io_error) => write!(f, "IO Error\n{io_error}"),
+            Error::Os(error) => write!(f, "OS Error\n{error}"),
+            Error::Io(error) => write!(f, "IO Error\n{error}"),
             Error::Parse(glsl::parser::ParseError { info }) => {
                 write!(f, "Failed to parse GLSL\n{info}")
             }
-            Error::Cpal(cpal_error) => write!(f, "CPAL Error\n{cpal_error:?}"),
+            Error::Cpal(error) => write!(f, "CPAL Error\n{error:?}"),
+            Error::Pulsectl(error) => write!(f, "Pulsectl Error\n{error:?}"),
         }
     }
 }
@@ -71,5 +73,11 @@ impl From<cpal::BuildStreamError> for Error {
 impl From<cpal::PlayStreamError> for Error {
     fn from(value: cpal::PlayStreamError) -> Self {
         Self::Cpal(Cpal::PlayStream(value))
+    }
+}
+
+impl From<pulsectl::ControllerError> for Error {
+    fn from(value: pulsectl::ControllerError) -> Self {
+        Self::Pulsectl(value)
     }
 }

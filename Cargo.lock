@@ -866,6 +866,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "libpulse-binding"
+version = "2.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1745b20bfc194ac12ef828f144f0ec2d4a7fe993281fa3567a0bd4969aee6890"
+dependencies = [
+ "bitflags",
+ "libc",
+ "libpulse-sys",
+ "num-derive",
+ "num-traits",
+ "winapi",
+]
+
+[[package]]
+name = "libpulse-sys"
+version = "1.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2191e6880818d1df4cf72eac8e91dce7a5a52ba0da4b2a5cdafabc22b937eadb"
+dependencies = [
+ "libc",
+ "num-derive",
+ "num-traits",
+ "pkg-config",
+ "winapi",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1272,6 +1299,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aeca18b86b413c660b781aa319e4e2648a3e6f9eadc9b47e9038e6fe9f3451b"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pulsectl-rs"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06a988bceed1981b2c5fc4a3da0e4e073fdaff8e6bd022b089f54bc573dc3cfc"
+dependencies = [
+ "libpulse-binding",
 ]
 
 [[package]]
@@ -1792,6 +1828,7 @@ dependencies = [
  "filetime",
  "glsl",
  "log",
+ "pulsectl-rs",
  "raw-window-handle 0.5.2",
  "realfft",
  "rustfft",

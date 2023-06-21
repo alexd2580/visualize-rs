@@ -1,14 +1,16 @@
 use std::ops::Deref;
 
-use log::{debug, warn};
+use log::{debug, error, warn};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::{audio::stereo::Stereo, error::Error, thread_shared::ThreadShared};
+use crate::{error::Error, thread_shared::ThreadShared};
 
 pub mod high_pass;
 pub mod low_pass;
+mod routing;
 mod stereo;
+mod virtual_sink;
 
 fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfigRange>>(
     // This is a newtype for a `range` iterator.
@@ -38,6 +40,10 @@ pub struct Audio {
     host: cpal::Host,
     pub sample_rate: usize,
     ring_buffer: ThreadShared<stereo::Stereo>,
+
+    _virtual_sink: Option<virtual_sink::VirtualSink>,
+    routing: Option<routing::Routing>,
+    default_sink: Option<pulsectl::controllers::types::DeviceInfo>,
 
     input_stream: Option<cpal::Stream>,
     output_stream: Option<cpal::Stream>,
@@ -136,7 +142,7 @@ impl Audio {
             }
 
             // No more delay samples.
-            let Stereo { left, right } = buffer.read();
+            let stereo::Stereo { left, right } = buffer.read();
             let read_buf_size = left.size;
 
             // Unfurled write index.
@@ -201,26 +207,78 @@ impl Audio {
         Ok(())
     }
 
-    pub fn new(seconds: u32, echo: bool) -> Result<Self, Error> {
+    fn routing(&mut self) -> &mut routing::Routing {
+        self.routing.as_mut().unwrap()
+    }
+
+    pub fn new(seconds: u32, delayed_echo: bool) -> Result<Self, Error> {
         let host = cpal::default_host();
 
+        // Create ring buffer.
         let sample_rate = 44100;
         let buffer_size = usize::try_from(seconds).unwrap() * sample_rate; // TODO
         let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
+
+        // Initialize virtual sink.
+        let virtual_sink_name = "visualize-rs".to_owned();
+        let virtual_sink = delayed_echo
+            .then(|| virtual_sink::VirtualSink::new(virtual_sink_name.clone()))
+            .transpose()?;
+
+        let mut routing = delayed_echo.then(routing::Routing::new).transpose()?;
+        let default_sink = delayed_echo
+            .then(|| routing.as_mut().unwrap().default_sink())
+            .transpose()?;
 
         let mut audio = Audio {
             host,
             sample_rate,
             ring_buffer,
+            _virtual_sink: virtual_sink,
+            routing,
+            default_sink,
             input_stream: None,
             output_stream: None,
         };
 
+        // Start the streams.
+        // TODO redirect default devices etcetc
         audio.init_input_stream()?;
-        if echo {
+        if delayed_echo {
             audio.init_output_stream()?;
+
+            let routing = audio.routing();
+            let default_output = routing.default_sink()?;
+            let (virtual_sink, virtual_monitor) =
+                routing.get_sink_and_monitor_device(&virtual_sink_name)?;
+            let (visualizer_record, visualizer_playback) =
+                routing.get_record_and_playback_streams(&virtual_sink_name)?;
+
+            if let (Some(visualizer_record), Some(visualizer_playback)) =
+                (visualizer_record, visualizer_playback)
+            {
+                routing.set_default_sink_device(&virtual_sink)?;
+                routing.set_playback_output(&visualizer_playback, &default_output)?;
+                routing.set_record_input(&visualizer_record, &virtual_monitor)?;
+            } else {
+                warn!("Can't find app '{virtual_sink_name}' in record or playback streams");
+            }
         }
 
         Ok(audio)
+    }
+}
+
+impl Drop for Audio {
+    fn drop(&mut self) {
+        if let (Some(routing), Some(default_sink)) = (&mut self.routing, &self.default_sink) {
+            let result = routing.set_default_sink_device(default_sink);
+            if let Err(error) = result {
+                error!(
+                    "Failed to set default sink back to {}: {error}",
+                    default_sink.name.as_ref().unwrap()
+                );
+            }
+        }
     }
 }
