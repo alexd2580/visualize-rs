@@ -16,6 +16,7 @@ pub enum Error {
     Parse(glsl::parser::ParseError),
     Cpal(Cpal),
     Pulsectl(pulsectl::ControllerError),
+    Shaderc(shaderc::Error),
 }
 
 impl Display for Error {
@@ -30,6 +31,7 @@ impl Display for Error {
             }
             Error::Cpal(error) => write!(f, "CPAL Error\n{error:?}"),
             Error::Pulsectl(error) => write!(f, "Pulsectl Error\n{error:?}"),
+            Error::Shaderc(error) => write!(f, "Shaderc Error\n{error:?}"),
         }
     }
 }
@@ -79,5 +81,11 @@ impl From<cpal::PlayStreamError> for Error {
 impl From<pulsectl::ControllerError> for Error {
     fn from(value: pulsectl::ControllerError) -> Self {
         Self::Pulsectl(value)
+    }
+}
+
+impl From<shaderc::Error> for Error {
+    fn from(value: shaderc::Error) -> Self {
+        Self::Shaderc(value)
     }
 }

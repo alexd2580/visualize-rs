@@ -2,16 +2,14 @@ use log::debug;
 use std::{
     fmt::Display,
     fs,
-    io::{self, Cursor},
     ops::Deref,
     path::{Path, PathBuf},
     rc::Rc,
-    slice,
 };
 
 use ash::vk;
 
-use crate::{error::Error, utils::exec_command};
+use crate::error::Error;
 
 use self::analysis::DescriptorInfo;
 
@@ -19,65 +17,28 @@ use super::device::Device;
 
 pub mod analysis;
 
-/// Decode SPIR-V from bytes.
-///
-/// This function handles SPIR-V of arbitrary endianness gracefully, and returns correctly aligned
-/// storage.
-///
-/// # Examples
-/// ```no_run
-/// // Decode SPIR-V from a file
-/// let mut file = std::fs::File::open("/path/to/shader.spv").unwrap();
-/// let words = ash::util::read_spv(&mut file).unwrap();
-/// ```
-/// ```
-/// // Decode SPIR-V from memory
-/// const SPIRV: &[u8] = &[
-///     // ...
-/// #   0x03, 0x02, 0x23, 0x07,
-/// ];
-/// let words = ash::util::read_spv(&mut std::io::Cursor::new(&SPIRV[..])).unwrap();
-/// ```
-pub fn read_spv<R: io::Read + io::Seek>(x: &mut R) -> io::Result<Vec<u32>> {
+fn compile_shader_file(file: &Path) -> Result<shaderc::CompilationArtifact, Error> {
     const MAGIC_NUMBER: u32 = 0x0723_0203;
 
-    let size = x.seek(io::SeekFrom::End(0))?;
-    if size % 4 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "input length not divisible by 4",
-        ));
-    }
-    if size > usize::max_value() as u64 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "input too long"));
-    }
-    let words = (size / 4) as usize;
-    // https://github.com/MaikKlein/ash/issues/354:
-    // Zero-initialize the result to prevent read_exact from possibly
-    // reading uninitialized memory.
-    let mut result = vec![0u32; words];
-    x.seek(io::SeekFrom::Start(0))?;
-    x.read_exact(unsafe {
-        slice::from_raw_parts_mut(result.as_mut_ptr().cast::<u8>(), words * 4)
-    })?;
-    if !result.is_empty() && result[0] == MAGIC_NUMBER.swap_bytes() {
-        for word in &mut result {
-            *word = word.swap_bytes();
-        }
-    }
-    if result.is_empty() || result[0] != MAGIC_NUMBER {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "input missing SPIR-V magic number",
-        ));
-    }
-    Ok(result)
-}
+    let source = fs::read_to_string(file)?;
+    let compiler = shaderc::Compiler::new()
+        .ok_or_else(|| Error::Local("Failed to create shaderc compiler".to_owned()))?;
 
-fn compile_shader_file(file: &Path) -> Result<Vec<u32>, Error> {
-    exec_command(&["glslc", file.to_str().unwrap(), "-o", "shaders/out.spv"])?;
-    let mut shader_spirv_bytes = Cursor::new(fs::read("shaders/out.spv")?);
-    Ok(read_spv(&mut shader_spirv_bytes)?)
+    let file_name = file.file_name().unwrap().to_str().unwrap();
+    let binary = compiler.compile_into_spirv(
+        &source,
+        shaderc::ShaderKind::Compute,
+        file_name,
+        "main",
+        None,
+    )?;
+
+    binary
+        .as_binary()
+        .first()
+        .is_some_and(|word| *word == MAGIC_NUMBER)
+        .then_some(binary)
+        .ok_or_else(|| Error::Local("Shader compilation produced invalid output".to_owned()))
 }
 
 pub struct ShaderModule {
@@ -133,7 +94,7 @@ impl ShaderModule {
 
         debug!("Compiling shader");
         let shader_content = compile_shader_file(&source_path)?;
-        let shader_info = vk::ShaderModuleCreateInfo::builder().code(&shader_content);
+        let shader_info = vk::ShaderModuleCreateInfo::builder().code(shader_content.as_binary());
         let shader_module = device.create_shader_module(&shader_info, None)?;
         let main_name = "main".to_owned();
 

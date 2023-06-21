@@ -24,6 +24,7 @@ cargo lint
 * Mix and match of different visualizations
 * Various "Improvements"
 * Cleanup of codebase
+* Web based stats page instead of logs
 
 # Current TODOs:
 
@@ -44,6 +45,8 @@ cargo lint
 - [x] Audio passthrough with delay
 - [x] Passthrough selector
 - [x] Automatic pulse null-sink setup and audio routing and restore on exit
+- [x] ~Check that glslc is present.... use native impl? does it exist?~ shaderc-rs! ~?~
+- [ ] Better delay control
 - [ ] Revise BPM and beat detection.
 - [ ] Better beat-effects. Check last_beat and next_beat
 - [ ] Exponentialize dft index on CPU side once?
@@ -52,4 +55,3 @@ cargo lint
 - [ ] Better bloom? Using linear image samplers?
 - [ ] mix and match
 - [ ] Document the installation process and requirements
-- [ ] Check that glslc is present.... use native impl? does it exist? shaderc-rs?
