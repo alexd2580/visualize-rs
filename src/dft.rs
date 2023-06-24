@@ -70,9 +70,9 @@ impl Dft {
 
     pub fn run_transform(&mut self) {
         // Hamming window for smoother DFT results.
-        for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
-            *val *= factor;
-        }
+        // for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
+        //     *val *= factor;
+        // }
 
         self.r2c
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)

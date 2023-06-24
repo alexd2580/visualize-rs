@@ -1,0 +1,71 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant, std140) uniform PushConstants {
+    layout(offset = 0) uint frame_index;
+    layout(offset = 4) bool is_beat;
+    layout(offset = 12) float now;
+};
+
+layout(binding = 2) buffer Pcm {
+    int size;
+    int position;
+    float data[];
+} pcm;
+
+layout(binding = 3) buffer Dft {
+    int size;
+    float data[];
+} dft;
+
+layout(rgba32f, binding = 4) uniform image2D present;
+
+const float eps = 0.002;
+
+int pcm_index(float x) {
+    int index_from_end = int((1 - x) * float(pcm.size));
+    int pcm_index = (pcm.size + (pcm.position - index_from_end)) % pcm.size;
+    return pcm_index;
+}
+
+vec3 pcm_image(vec2 pos) {
+    int index = pcm_index(pos.x);
+    float max_val = abs(pcm.data[index]);
+    float y = pos.y * 2 - 1;
+    float color = max_val > abs(y) - eps ? 1.0 : 0.0;
+    return vec3(color, 0, 0);
+}
+
+int dft_index(float x) {
+    return int(x * dft.size);
+}
+
+float dft_color(int index, float value, float y) {
+    y = y * 2 - 1;
+    float scale = 10.0; // (14 + 0.8 * index) / 15;
+    return scale * value >= abs(y) - eps ? 1.0 : 0.0;
+}
+
+vec3 dft_image(vec2 pos) {
+    int index = dft_index(pos.x);
+    float dft_value = dft.data[index];
+    return vec3(0, 0, dft_color(index, dft_value, pos.y));
+}
+
+vec3 main_image(vec2 pos) {
+    if (pos.y < 0.5) {
+        return pcm_image(vec2(pos.x, pos.y * 2));
+    } else {
+        return dft_image(vec2(pos.x, (pos.y - 0.5) * 2));
+    }
+}
+
+void main() {
+    ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+    ivec2 ipixel = ivec2(gl_GlobalInvocationID.xy);
+    vec2 pixel = vec2(ipixel) / iimage_size;
+
+    vec3 image = main_image(pixel);
+    imageStore(present, ipixel, vec4(image, 1));
+}
