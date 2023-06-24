@@ -7,7 +7,7 @@ pub struct RingBuffer<T> {
     pub write_index: usize,
 }
 
-impl<T: Copy + Default> RingBuffer<T> {
+impl<T: Clone + Copy + Default> RingBuffer<T> {
     pub fn new(size: usize) -> Self {
         RingBuffer {
             size,
@@ -16,54 +16,12 @@ impl<T: Copy + Default> RingBuffer<T> {
             write_index: 0,
         }
     }
-}
 
-impl<T: Copy> RingBuffer<T> {
-    pub fn new_with_default(size: usize, default: T) -> Self {
-        RingBuffer {
-            size,
-            data: vec![default; size],
-            prev_index: size - 1,
-            write_index: 0,
-        }
-    }
-
-    pub fn new_with_data(data: Vec<T>) -> Self {
-        let size = data.len();
-        RingBuffer {
-            size,
-            data,
-            prev_index: size - 1,
-            write_index: 0,
-        }
-    }
-}
-
-impl<T: Copy> From<Vec<T>> for RingBuffer<T> {
-    fn from(value: Vec<T>) -> Self {
-        RingBuffer::new_with_data(value)
-    }
-}
-
-impl<T: Copy> RingBuffer<T> {
     fn unwrap(&self) -> (&[T], &[T]) {
         (
             &self.data.as_slice()[self.write_index..],
             &self.data.as_slice()[..self.write_index],
         )
-    }
-
-    fn offset_index(&self, pos: usize, neg: usize) -> usize {
-        let idx = self.write_index + pos + self.size - neg;
-        if idx >= self.size {
-            idx % self.size
-        } else {
-            idx
-        }
-    }
-
-    pub fn at_offset(&self, pos: usize, neg: usize) -> &T {
-        &self.data[self.offset_index(pos, neg)]
     }
 
     pub fn advance(&mut self) {
@@ -95,7 +53,7 @@ impl<T: Copy> RingBuffer<T> {
         buffer[from_start..].copy_from_slice(&end[end.len() - from_end..]);
     }
 
-    /// Write the ringbuffer to the pointer, posting its size and write index first and then
+    /// Write the rinbuffer to the pointer, posting its size and write index first and then
     /// updating only the section that has been modified, namely `[read_index..(potential
     /// wraparound)..write_index]`.
     pub fn write_to_pointer(&self, read_index: usize, write_index: usize, target: *mut c_void) {
@@ -106,7 +64,7 @@ impl<T: Copy> RingBuffer<T> {
             *target.cast::<u32>() = u32::try_from(write_index).unwrap();
             let target = target.add(mem::size_of::<u32>());
 
-            if read_index < write_index {
+            if read_index <= write_index {
                 let data = &self.data.as_slice()[read_index..write_index];
                 let target = target.add(read_index * mem::size_of::<f32>());
                 let count = write_index - read_index;

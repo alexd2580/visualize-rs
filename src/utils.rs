@@ -26,9 +26,3 @@ pub fn exec_command(command: &[&str]) -> Result<String, Error> {
         Err(Error::Local(msg))
     }
 }
-
-/// Relative difference.
-/// For reference see <https://en.wikipedia.org/wiki/Relative_change_and_difference>
-pub fn relative_delta(a: f32, b: f32) -> f32 {
-    ((a / b) - 1f32).abs()
-}

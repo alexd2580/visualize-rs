@@ -42,10 +42,6 @@ struct Visualizer {
     high_pass_dft: dft::Dft,
     high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
-    // Debug
-    pcm_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-
     images: Vec<Rc<vulkan::multi_image::MultiImage>>,
 
     vulkan: vulkan::Vulkan,
@@ -109,8 +105,7 @@ impl Visualizer {
 
         let audio = audio::Audio::new(args.audio_buffer_sec, args.passthrough)?;
         let audio_buffer_size = audio.buffer_size();
-        let audio_buffer_bytes =
-            audio_buffer_size * mem::size_of::<f32>() + 2 * mem::size_of::<i32>();
+        let audio_buffer_bytes = audio_buffer_size * mem::size_of::<f32>();
         let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
 
         let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.02);
@@ -129,7 +124,7 @@ impl Visualizer {
         let frequency_band_border_indices = frequency_band_borders
             .map(|frequency| dft_index_of_frequency(frequency, audio.sample_rate, dft_size));
 
-        let dft_result_size = dft::Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
+        let dft_result_size = dft::Dft::output_byte_size(args.dft_size);
 
         let signal_dft = dft::Dft::new(args.dft_size);
         let signal_dft_gpu = vulkan.new_multi_buffer("signal_dft", dft_result_size, Some(1))?;
@@ -144,12 +139,6 @@ impl Visualizer {
         let short_size = (0.2 * frame_rate as f32) as usize;
         let long_size = 4 * frame_rate;
         let beat_analysis = beat_analysis::BeatAnalysis::new(short_size, long_size);
-
-        // debug
-        let pcm_size = (2 + 4 * 60) * mem::size_of::<f32>();
-        let pcm_gpu = vulkan.new_multi_buffer("pcm", pcm_size, Some(1))?;
-        let dft_size = dft::Dft::output_byte_size(4 * 60) + mem::size_of::<i32>();
-        let dft_gpu = vulkan.new_multi_buffer("dft", dft_size, Some(1))?;
 
         let mut visualizer = Self {
             epoch: time::Instant::now(),
@@ -173,8 +162,6 @@ impl Visualizer {
             beat_analysis,
             images,
             vulkan,
-            dft_gpu,
-            pcm_gpu,
         };
 
         visualizer.reinitialize_images()?;
@@ -232,16 +219,16 @@ impl Visualizer {
 
         let is_beat = self.beat_analysis.is_beat;
         push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
-        // let matches_bpm = self.beat_analysis.matches_bpm;
-        // push_constant_values.insert("matches_bpm".to_owned(), Bool(matches_bpm));
-        // let beat_count = u32::try_from(self.beat_analysis.beat_count).unwrap();
-        // push_constant_values.insert("beat_count".to_owned(), U32(beat_count));
+        let matches_bpm = self.beat_analysis.matches_bpm;
+        push_constant_values.insert("matches_bpm".to_owned(), Bool(matches_bpm));
+        let beat_count = u32::try_from(self.beat_analysis.beat_count).unwrap();
+        push_constant_values.insert("beat_count".to_owned(), U32(beat_count));
         let now = self.epoch.elapsed().as_secs_f32();
         push_constant_values.insert("now".to_owned(), F32(now));
-        // let last_beat = (self.beat_analysis.last_bpm_beat - self.epoch).as_secs_f32();
-        // push_constant_values.insert("last_beat".to_owned(), F32(last_beat));
-        // let next_beat = (self.beat_analysis.next_bpm_beat - self.epoch).as_secs_f32();
-        // push_constant_values.insert("next_beat".to_owned(), F32(next_beat));
+        let last_beat = (self.beat_analysis.last_bpm_beat - self.epoch).as_secs_f32();
+        push_constant_values.insert("last_beat".to_owned(), F32(last_beat));
+        let next_beat = (self.beat_analysis.next_bpm_beat - self.epoch).as_secs_f32();
+        push_constant_values.insert("next_beat".to_owned(), F32(next_beat));
 
         match unsafe { self.vulkan.tick(&push_constant_values)? } {
             None => (),
@@ -302,7 +289,6 @@ impl Visualizer {
             &self.high_pass_dft_gpu,
         );
 
-        // Beat analysis.
         let beat_dft = &self.low_pass_dft;
         let beat_dft_lower = dft_index_of_frequency(35, self.audio.sample_rate, beat_dft.size());
         let beat_dft_upper = dft_index_of_frequency(125, self.audio.sample_rate, beat_dft.size());
@@ -312,10 +298,6 @@ impl Visualizer {
             .fold(0f32, |a, b| a + b);
         self.beat_analysis
             .sample(beat_dft_sum / beat_dft_sum_size as f32);
-
-        let pcm = &self.beat_analysis.time_series;
-        pcm.write_to_pointer(pcm.write_index, pcm.write_index, self.pcm_gpu.mapped(0));
-        self.beat_analysis.dft.write_to_pointer(self.dft_gpu.mapped(0));
 
         self.timer.section("DFTs and DFTs to GPU");
 
