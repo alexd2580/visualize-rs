@@ -1,16 +1,17 @@
 use std::{f32::consts::PI, ffi::c_void, mem, sync::Arc};
 
-use realfft::{RealFftPlanner, RealToComplex};
+use realfft;
 use rustfft::num_complex::Complex;
 
 pub struct Dft {
-    r2c: Arc<dyn RealToComplex<f32>>,
+    r2c: Arc<dyn realfft::RealToComplex<f32>>,
+    c2r: Arc<dyn realfft::ComplexToReal<f32>>,
 
     hamming: Vec<f32>,
 
-    input: Vec<f32>,
+    pub input: Vec<f32>,
     scratch: Vec<Complex<f32>>,
-    output: Vec<Complex<f32>>,
+    pub output: Vec<Complex<f32>>,
 
     pub simple: Vec<f32>,
 }
@@ -21,8 +22,9 @@ impl Dft {
     }
 
     pub fn new(length: usize) -> Self {
-        let mut real_planner = RealFftPlanner::<f32>::new();
+        let mut real_planner = realfft::RealFftPlanner::<f32>::new();
         let r2c = real_planner.plan_fft_forward(length);
+        let c2r = real_planner.plan_fft_inverse(length);
 
         let input = r2c.make_input_vec();
         let scratch = r2c.make_scratch_vec();
@@ -42,6 +44,7 @@ impl Dft {
 
         Dft {
             r2c,
+            c2r,
             hamming,
             input,
             scratch,
@@ -70,19 +73,33 @@ impl Dft {
 
     pub fn run_transform(&mut self) {
         // Hamming window for smoother DFT results.
-        for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
-            *val *= factor;
-        }
+        // for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
+        //     *val *= factor;
+        // }
 
         self.r2c
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
             .unwrap();
 
         // Experimentally determined factor, scales the majority of frequencies to [0..1].
-        let factor = 1f32 / (0.27 * self.input.len() as f32);
-        for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
-            let next_val = output.norm() * factor;
-            *simple = 0f32.max(*simple - 0.015).max(next_val);
+        // let factor = 1f32 / (0.27 * self.input.len() as f32);
+        // for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
+        //     let next_val = output.norm() * factor;
+        //     *simple = 0f32.max(*simple - 0.015).max(next_val);
+        // }
+    }
+
+    fn run_inverse(&mut self) {
+        self.c2r
+            .process_with_scratch(&mut self.output, &mut self.input, &mut self.scratch)
+            .unwrap();
+    }
+
+    pub fn autocorrelate(&mut self) {
+        self.run_transform();
+        for x in self.output.iter_mut() {
+            *x = *x * x.conj();
         }
+        self.run_inverse();
     }
 }

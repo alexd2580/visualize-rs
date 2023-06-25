@@ -138,7 +138,7 @@ impl Visualizer {
 
         let short_size = (0.2 * frame_rate as f32) as usize;
         let long_size = 4 * frame_rate;
-        let beat_analysis = beat_analysis::BeatAnalysis::new(short_size, long_size);
+        let beat_analysis = beat_analysis::BeatAnalysis::new(&vulkan, short_size, long_size);
 
         let mut visualizer = Self {
             epoch: time::Instant::now(),
