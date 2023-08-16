@@ -1,9 +1,11 @@
-use std::{mem, rc::Rc, time};
+use std::{mem, rc::Rc, sync::Arc, time};
 
 use clap::Parser;
 
 use error::Error;
 use log::{error, info, warn};
+use poem::{web::sse, EndpointExt};
+use tokio::{runtime, sync::broadcast};
 
 mod audio;
 mod beat_analysis;
@@ -15,6 +17,8 @@ mod timer;
 mod utils;
 mod vulkan;
 mod window;
+
+type Message = Vec<f32>;
 
 /// Note the reverse drop order.
 struct Visualizer {
@@ -47,6 +51,8 @@ struct Visualizer {
     vulkan: vulkan::Vulkan,
 
     timer: timer::Timer,
+
+    broadcast: Arc<broadcast::Sender<Message>>,
 }
 
 fn dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: usize) -> usize {
@@ -96,7 +102,11 @@ impl Visualizer {
         Ok(())
     }
 
-    fn new(window: &window::Window, args: &Args) -> Result<Visualizer, Error> {
+    fn new(
+        window: &window::Window,
+        args: &Args,
+        broadcast: &Arc<broadcast::Sender<Message>>,
+    ) -> Result<Visualizer, Error> {
         let mut vulkan = vulkan::Vulkan::new(window, &args.shader_paths, args.vsync)?;
         let images = Vec::new();
 
@@ -105,7 +115,8 @@ impl Visualizer {
 
         let audio = audio::Audio::new(args.audio_buffer_sec, args.passthrough)?;
         let audio_buffer_size = audio.buffer_size();
-        let audio_buffer_bytes = audio_buffer_size * mem::size_of::<f32>();
+        let audio_buffer_bytes =
+            audio_buffer_size * mem::size_of::<f32>() + 2 * mem::size_of::<i32>();
         let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
 
         let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.02);
@@ -124,7 +135,7 @@ impl Visualizer {
         let frequency_band_border_indices = frequency_band_borders
             .map(|frequency| dft_index_of_frequency(frequency, audio.sample_rate, dft_size));
 
-        let dft_result_size = dft::Dft::output_byte_size(args.dft_size);
+        let dft_result_size = dft::Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
 
         let signal_dft = dft::Dft::new(args.dft_size);
         let signal_dft_gpu = vulkan.new_multi_buffer("signal_dft", dft_result_size, Some(1))?;
@@ -136,11 +147,12 @@ impl Visualizer {
         let high_pass_dft_gpu =
             vulkan.new_multi_buffer("high_pass_dft", dft_result_size, Some(1))?;
 
-        let short_size = (0.2 * frame_rate as f32) as usize;
-        let long_size = 4 * frame_rate;
-        let beat_analysis = beat_analysis::BeatAnalysis::new(&vulkan, short_size, long_size);
+        let beat_analysis = beat_analysis::BeatAnalysis::new(&mut vulkan)?;
+
+        let broadcast = broadcast.clone();
 
         let mut visualizer = Self {
+            broadcast,
             epoch: time::Instant::now(),
             timer: timer::Timer::new(0.9),
             available_samples: 0,
@@ -213,22 +225,14 @@ impl Visualizer {
     }
 
     fn run_vulkan(&mut self) -> Result<(), Error> {
-        use vulkan::Value::{Bool, F32, U32};
+        use vulkan::Value::{Bool, F32};
 
         let mut push_constant_values = std::collections::HashMap::new();
 
         let is_beat = self.beat_analysis.is_beat;
         push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
-        let matches_bpm = self.beat_analysis.matches_bpm;
-        push_constant_values.insert("matches_bpm".to_owned(), Bool(matches_bpm));
-        let beat_count = u32::try_from(self.beat_analysis.beat_count).unwrap();
-        push_constant_values.insert("beat_count".to_owned(), U32(beat_count));
         let now = self.epoch.elapsed().as_secs_f32();
         push_constant_values.insert("now".to_owned(), F32(now));
-        let last_beat = (self.beat_analysis.last_bpm_beat - self.epoch).as_secs_f32();
-        push_constant_values.insert("last_beat".to_owned(), F32(last_beat));
-        let next_beat = (self.beat_analysis.next_bpm_beat - self.epoch).as_secs_f32();
-        push_constant_values.insert("next_beat".to_owned(), F32(next_beat));
 
         match unsafe { self.vulkan.tick(&push_constant_values)? } {
             None => (),
@@ -293,9 +297,13 @@ impl Visualizer {
         let beat_dft_lower = dft_index_of_frequency(35, self.audio.sample_rate, beat_dft.size());
         let beat_dft_upper = dft_index_of_frequency(125, self.audio.sample_rate, beat_dft.size());
         let beat_dft_sum_size = beat_dft_upper - beat_dft_lower;
-        let beat_dft_sum = beat_dft.simple[beat_dft_lower..beat_dft_upper]
-            .iter()
-            .fold(0f32, |a, b| a + b);
+        let bass_frequencies = &beat_dft.simple[beat_dft_lower..beat_dft_upper];
+
+        self.broadcast
+            .send(bass_frequencies.to_owned())
+            .expect("Failed to broadcast frame bass frequencies");
+
+        let beat_dft_sum = bass_frequencies.iter().fold(0f32, |a, b| a + b);
         self.beat_analysis
             .sample(beat_dft_sum / beat_dft_sum_size as f32);
 
@@ -332,7 +340,7 @@ impl window::App for Visualizer {
 }
 
 /// Run an audio visualizer.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 struct Args {
     /// The shader module path
     #[arg(short, long, num_args = 0.., default_value = "shaders/debug.comp")]
@@ -354,15 +362,46 @@ struct Args {
     passthrough: bool,
 }
 
+#[poem::handler]
+fn event(channel: poem::web::Data<&Arc<broadcast::Sender<Message>>>) -> sse::SSE {
+    let mut receiver = channel.subscribe();
+    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
+        let val = receiver.recv().await.unwrap();
+        let val = serde_json::to_string_pretty(&val).unwrap();
+        Some((sse::Event::message(val), receiver))
+    });
+    sse::SSE::new(stream).keep_alive(time::Duration::from_secs(5))
+}
+
+async fn run_server(sender: Arc<broadcast::Sender<Message>>) {
+    let cors = poem::middleware::Cors::new().allow_method(poem::http::Method::GET);
+    let app = poem::Route::new()
+        .at("/event", poem::get(event))
+        .with(poem::middleware::AddData::new(sender.clone()))
+        .with(cors);
+    let _ = poem::Server::new(poem::listener::TcpListener::bind("127.0.0.1:3000"))
+        .run(app)
+        .await;
+}
+
 fn run_main(args: &Args) -> Result<(), Error> {
+    let (sender, _receiver) = broadcast::channel(10);
+    let sender = Arc::new(sender);
+
+    // Start server.
+    let runtime = runtime::Runtime::new()?;
+    let server = runtime.spawn(run_server(sender.clone()));
+
+    // Run visualizer.
     let mut window = window::Window::new()?;
 
     {
-        let mut visualizer = Visualizer::new(&window, args)?;
+        let mut visualizer = Visualizer::new(&window, &args, &sender)?;
         log::info!("Running...");
         window.run_main_loop(&mut visualizer);
     }
 
+    server.abort();
     Ok(())
 }
 

@@ -1,36 +1,104 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    time,
+    mem,
+    ops::{Deref, DerefMut},
+    rc::Rc,
 };
 
-use log::debug;
+use crate::{
+    dft::Dft,
+    error::Error,
+    ring_buffer::RingBuffer,
+    utils::mix,
+    vulkan::{multi_buffer::MultiBuffer, Vulkan},
+};
 
-use crate::{ring_buffer::RingBuffer, vulkan::Vulkan};
-
-#[derive(Eq, Hash, PartialEq, Clone, Debug)]
-pub struct BeatStream {
-    pub period: time::Duration,
-    pub count: usize,
+struct History {
+    pub values: RingBuffer<f32>,
+    pub min: f32,
+    pub max: f32,
 }
 
-pub struct BeatAnalysis {
-    // Averages.
-    last_values: RingBuffer<f32>,
+impl Deref for History {
+    type Target = RingBuffer<f32>;
 
-    // TODO maybe a floating average is better for the long_sum.
-    long_avg_size: usize,
-    long_sum: f32,
-    // Cached value.
-    long_avg: f32,
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
 
-    short_avg_size: usize,
-    short_sum: f32,
-    // Cached value.
-    short_avg: f32,
+impl DerefMut for History {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.values
+    }
+}
+
+impl History {
+    fn new(num_samples: usize) -> Self {
+        History {
+            values: RingBuffer::new(num_samples),
+            min: 0f32,
+            max: 0f32,
+        }
+    }
+}
+
+struct AlphaAvg {
+    pub alpha: f32,
+    pub avg: f32,
+}
+
+impl AlphaAvg {
+    fn new(alpha: f32) -> Self {
+        AlphaAvg { alpha, avg: 0f32 }
+    }
+
+    fn sample(&mut self, x: f32) {
+        self.avg = mix(self.avg, x, self.alpha);
+    }
+}
+
+struct WindowedAvg {
+    pub size: usize,
+
+    sum: f32,
+    pub avg: f32,
+
     square_sum: f32,
     square_avg: f32,
 
-    standard_deviation: f32,
+    pub sd: f32,
+}
+
+impl WindowedAvg {
+    fn new(size: usize) -> Self {
+        WindowedAvg {
+            size,
+            sum: 0f32,
+            avg: 0f32,
+            square_sum: 0f32,
+            square_avg: 0f32,
+            sd: 0f32,
+        }
+    }
+
+    fn sample(&mut self, old_x: f32, x: f32) {
+        self.sum += x - old_x;
+        self.avg = self.sum / self.size as f32;
+
+        self.square_sum += x.powf(2f32) - old_x.powf(2f32);
+        self.square_avg = self.square_sum / self.size as f32;
+
+        self.sd = (self.square_avg - self.avg.powf(2f32)).sqrt();
+    }
+}
+
+pub struct BeatAnalysis {
+    history: History,
+    history_gpu: Rc<MultiBuffer>,
+
+    // Averages.
+    long_avg: AlphaAvg,
+    short_avg: WindowedAvg,
 
     // Beat detection.
     noise_threshold_factor: f32,
@@ -39,15 +107,8 @@ pub struct BeatAnalysis {
     pub is_beat: bool,
 
     // BPM detection.
-    last_beats: VecDeque<time::Instant>,
-    beat_streams: HashMap<time::Instant, Vec<BeatStream>>,
-
-    // Deprecated
-    // Whether there is currentle an extraordinary signal energy.
-    pub beat_count: usize,
-    pub matches_bpm: bool,
-    pub last_bpm_beat: time::Instant,
-    pub next_bpm_beat: time::Instant,
+    autocorrelation: Dft,
+    autocorrelation_gpu: Rc<MultiBuffer>,
 }
 
 fn wrap_index(pos_offset: usize, neg_offset: usize, len: usize) -> usize {
@@ -60,62 +121,49 @@ fn wrap_index(pos_offset: usize, neg_offset: usize, len: usize) -> usize {
 }
 
 impl BeatAnalysis {
-    pub fn new(vulkan: &Vulkan, short_avg_size: usize, long_avg_size: usize) -> Self {
-        let last_values = RingBuffer::new(long_avg_size);
-        Self {
-            // History.
-            last_values,
+    pub fn new(vulkan: &mut Vulkan) -> Result<Self, Error> {
+        let frame_rate = 60;
+
+        let history_size = 8 * frame_rate;
+        let history_gpu_size = 2 * mem::size_of::<i32>() + history_size * mem::size_of::<f32>();
+
+        let autocorrelation_gpu_size = mem::size_of::<i32>() + history_size * mem::size_of::<f32>();
+
+        Ok(Self {
+            history: History::new(history_size),
+            history_gpu: vulkan.new_multi_buffer("history", history_gpu_size, Some(1))?,
             // Averages.
-            long_avg_size,
-            long_sum: 0f32,
-            long_avg: 0f32,
-            short_avg_size,
-            short_sum: 0f32,
-            short_avg: 0f32,
-            square_sum: 0f32,
-            square_avg: 0f32,
-            standard_deviation: 0f32,
+            long_avg: AlphaAvg::new(0.99),
+            short_avg: WindowedAvg::new((0.2 * frame_rate as f32) as usize),
             // Beat detection.
             noise_threshold_factor: 0.25,
             beat_sigma_threshold_factor: 2.2,
             is_high: false,
             is_beat: false,
             // BPM detection.
-            last_beats: VecDeque::new(),
-            beat_streams: HashMap::new(),
-            //Deprecated
-            beat_count: 0,
-            matches_bpm: false,
-            last_bpm_beat: time::Instant::now(),
-            next_bpm_beat: time::Instant::now() + time::Duration::from_secs(1),
-        }
+            autocorrelation: Dft::new(8 * frame_rate),
+            autocorrelation_gpu: vulkan.new_multi_buffer(
+                "autocorrelation",
+                autocorrelation_gpu_size,
+                Some(1),
+            )?,
+        })
     }
 
     fn update_averages(&mut self, x: f32) {
-        // Update averages.
-        let long_sum_read_value = self.last_values.at_offset(0, self.long_avg_size);
-        self.long_sum = self.long_sum - long_sum_read_value + x;
-        self.long_avg = self.long_sum / self.long_avg_size as f32;
+        self.long_avg.sample(x);
 
-        let short_sum_read_value = self.last_values.at_offset(0, self.short_avg_size);
-        self.short_sum = self.short_sum - short_sum_read_value + x;
-        self.short_avg = self.short_sum / self.short_avg_size as f32;
+        let old_x = self.history.at_offset(0, self.short_avg.size);
+        self.short_avg.sample(*old_x, x);
 
-        let square_sum_read_value = short_sum_read_value.powf(2f32);
-        self.square_sum = self.square_sum - square_sum_read_value + x.powf(2f32);
-        self.square_avg = self.square_sum / self.short_avg_size as f32;
-
-        self.standard_deviation = (self.square_avg - self.short_avg.powf(2f32)).sqrt();
-
-        // Update history.
-        self.last_values.push(x);
+        self.history.push(x);
     }
 
     fn decide_beat(&mut self, x: f32) {
-        let noise_threshold = self.noise_threshold_factor * self.long_avg;
-        let not_noise = self.short_avg > noise_threshold;
-        let beat_margin = self.beat_sigma_threshold_factor * self.standard_deviation;
-        let beat_threshold = self.short_avg + beat_margin;
+        let noise_threshold = self.noise_threshold_factor * self.long_avg.avg;
+        let not_noise = self.short_avg.avg > noise_threshold;
+        let beat_margin = self.beat_sigma_threshold_factor * self.short_avg.sd;
+        let beat_threshold = self.short_avg.avg + beat_margin;
         let loud_outlier = x > beat_threshold;
 
         let was_high = self.is_high;
@@ -124,8 +172,18 @@ impl BeatAnalysis {
     }
 
     fn update_bpm(&mut self) {
+        // Just the last value.
+        self.history.write_to_pointer(
+            self.history.offset_index(0, 1),
+            self.history.write_index,
+            self.history_gpu.mapped(0),
+        );
 
-
+        self.history
+            .write_to_buffer(self.autocorrelation.get_input_vec());
+        self.autocorrelation.autocorrelate();
+        self.autocorrelation
+            .write_input_to_pointer(self.autocorrelation_gpu.mapped(0));
 
         // if !self.is_beat {
         //     return;
@@ -223,15 +281,5 @@ impl BeatAnalysis {
         self.update_averages(x);
         self.decide_beat(x);
         self.update_bpm();
-    }
-
-    pub fn last_beat(&self) -> time::Instant {
-        return time::Instant::now() - time::Duration::from_secs(5000);
-        // self.beat_timestamps[wrap_index(self.beat_count, 1, self.beat_timestamps.len())]
-    }
-
-    pub fn next_beat(&self) -> time::Instant {
-        return time::Instant::now() + time::Duration::from_secs(5000);
-        // self.last_beat() + time::Duration::from_secs_f32(self.spb)
     }
 }

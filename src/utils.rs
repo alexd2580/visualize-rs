@@ -11,6 +11,7 @@ pub fn mtime(path: &Path) -> Result<FileTime, Error> {
     Ok(FileTime::from_last_modification_time(&metadata))
 }
 
+/// alpha = 1 uses 100% of a. alpha = 0 uses 100% of b.
 pub fn mix(a: f32, b: f32, alpha: f32) -> f32 {
     a * alpha + b * (1f32 - alpha)
 }

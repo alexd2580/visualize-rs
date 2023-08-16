@@ -53,7 +53,7 @@ impl<T: Copy> RingBuffer<T> {
         )
     }
 
-    fn offset_index(&self, pos: usize, neg: usize) -> usize {
+    pub fn offset_index(&self, pos: usize, neg: usize) -> usize {
         let idx = self.write_index + pos + self.size - neg;
         if idx >= self.size {
             idx % self.size

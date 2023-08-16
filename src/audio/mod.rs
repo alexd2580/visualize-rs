@@ -257,9 +257,14 @@ impl Audio {
             if let (Some(visualizer_record), Some(visualizer_playback)) =
                 (visualizer_record, visualizer_playback)
             {
+                debug!(
+                    "Visualizer record: {}; playback: {}",
+                    visualizer_record.name.as_ref().unwrap(),
+                    visualizer_playback.name.as_ref().unwrap()
+                );
                 routing.set_default_sink_device(&virtual_sink)?;
-                routing.set_playback_output(&visualizer_playback, &default_output)?;
                 routing.set_record_input(&visualizer_record, &virtual_monitor)?;
+                routing.set_playback_output(&visualizer_playback, &default_output)?;
             } else {
                 warn!("Can't find app '{virtual_sink_name}' in record or playback streams");
             }
