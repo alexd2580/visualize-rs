@@ -1,24 +1,19 @@
 use std::{mem, rc::Rc, sync::Arc, time};
 
 use clap::Parser;
-
-use error::Error;
-use log::{error, info, warn};
-use poem::{web::sse, EndpointExt};
-use tokio::{runtime, sync::broadcast};
+use server::FrameSender;
 
 mod audio;
 mod beat_analysis;
 mod dft;
 mod error;
 mod ring_buffer;
+mod server;
 mod thread_shared;
 mod timer;
 mod utils;
 mod vulkan;
 mod window;
-
-type Message = Vec<f32>;
 
 /// Note the reverse drop order.
 struct Visualizer {
@@ -52,7 +47,7 @@ struct Visualizer {
 
     timer: timer::Timer,
 
-    broadcast: Arc<broadcast::Sender<Message>>,
+    broadcast: Arc<FrameSender>,
 }
 
 fn dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: usize) -> usize {
@@ -105,8 +100,8 @@ impl Visualizer {
     fn new(
         window: &window::Window,
         args: &Args,
-        broadcast: &Arc<broadcast::Sender<Message>>,
-    ) -> Result<Visualizer, Error> {
+        broadcast: Arc<FrameSender>,
+    ) -> Result<Visualizer, error::Error> {
         let mut vulkan = vulkan::Vulkan::new(window, &args.shader_paths, args.vsync)?;
         let images = Vec::new();
 
@@ -129,7 +124,7 @@ impl Visualizer {
         let dft_window_per_s = audio.sample_rate as f32 / dft_size as f32;
         let dft_min_fq = dft_window_per_s * 1f32;
         let dft_max_fq = dft_window_per_s * dft_size as f32 / 2f32;
-        info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
+        log::info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
 
         let frequency_band_borders = [16, 60, 250, 500, 2000, 4000, 6000, 22000];
         let frequency_band_border_indices = frequency_band_borders
@@ -148,8 +143,6 @@ impl Visualizer {
             vulkan.new_multi_buffer("high_pass_dft", dft_result_size, Some(1))?;
 
         let beat_analysis = beat_analysis::BeatAnalysis::new(&mut vulkan)?;
-
-        let broadcast = broadcast.clone();
 
         let mut visualizer = Self {
             broadcast,
@@ -206,7 +199,7 @@ impl Visualizer {
         let sample_underrun_pct = 100f32 * sample_underrun as f32 / consume_samples as f32;
         if !ok && consume_samples > available_samples {
             if sample_underrun_pct > 50f32 {
-                warn!("Sample underrun by {sample_underrun} ({sample_underrun_pct:.2}%)");
+                log::warn!("Sample underrun by {sample_underrun} ({sample_underrun_pct:.2}%)");
             }
             consume_samples = available_samples;
         }
@@ -214,7 +207,7 @@ impl Visualizer {
         let sample_overrun_pct =
             100f32 * available_samples as f32 / (consume_samples as f32 + 1f32);
         if ok && sample_overrun_pct > 2000f32 {
-            warn!("Sample overrun by {available_samples} ({sample_overrun_pct:.2}%)");
+            log::warn!("Sample overrun by {available_samples} ({sample_overrun_pct:.2}%)");
         }
 
         self.available_samples = available_samples - consume_samples;
@@ -224,7 +217,7 @@ impl Visualizer {
         (read_index, write_index, buf_size)
     }
 
-    fn run_vulkan(&mut self) -> Result<(), Error> {
+    fn run_vulkan(&mut self) -> Result<(), error::Error> {
         use vulkan::Value::{Bool, F32};
 
         let mut push_constant_values = std::collections::HashMap::new();
@@ -312,7 +305,7 @@ impl Visualizer {
         let result = match self.run_vulkan() {
             Ok(()) => winit::event_loop::ControlFlow::Poll,
             Err(err) => {
-                error!("{err}");
+                log::error!("{err}");
                 winit::event_loop::ControlFlow::ExitWithCode(1)
             }
         };
@@ -362,46 +355,15 @@ struct Args {
     passthrough: bool,
 }
 
-#[poem::handler]
-fn event(channel: poem::web::Data<&Arc<broadcast::Sender<Message>>>) -> sse::SSE {
-    let mut receiver = channel.subscribe();
-    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
-        let val = receiver.recv().await.unwrap();
-        let val = serde_json::to_string_pretty(&val).unwrap();
-        Some((sse::Event::message(val), receiver))
-    });
-    sse::SSE::new(stream).keep_alive(time::Duration::from_secs(5))
-}
-
-async fn run_server(sender: Arc<broadcast::Sender<Message>>) {
-    let cors = poem::middleware::Cors::new().allow_method(poem::http::Method::GET);
-    let app = poem::Route::new()
-        .at("/event", poem::get(event))
-        .with(poem::middleware::AddData::new(sender.clone()))
-        .with(cors);
-    let _ = poem::Server::new(poem::listener::TcpListener::bind("127.0.0.1:3000"))
-        .run(app)
-        .await;
-}
-
-fn run_main(args: &Args) -> Result<(), Error> {
-    let (sender, _receiver) = broadcast::channel(10);
-    let sender = Arc::new(sender);
-
-    // Start server.
-    let runtime = runtime::Runtime::new()?;
-    let server = runtime.spawn(run_server(sender.clone()));
-
-    // Run visualizer.
+fn run_main(args: &Args) -> Result<(), error::Error> {
+    let (server, sender) = server::Server::start();
     let mut window = window::Window::new()?;
-
     {
-        let mut visualizer = Visualizer::new(&window, &args, &sender)?;
+        let mut visualizer = Visualizer::new(&window, &args, sender)?;
         log::info!("Running...");
         window.run_main_loop(&mut visualizer);
     }
-
-    server.abort();
+    server.stop();
     Ok(())
 }
 
@@ -410,7 +372,7 @@ fn main() {
     log::info!("Initializing...");
     let args = Args::parse();
     if let Err(err) = run_main(&args) {
-        error!("{}", err);
+        log::error!("{}", err);
     }
     log::info!("Terminating...");
 }
