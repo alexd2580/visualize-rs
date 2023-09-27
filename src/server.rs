@@ -76,7 +76,7 @@ async fn run_server(sender: Arc<FrameSender>) {
 
 pub struct Server {
     receiver: FrameReceiver,
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     thread_handle: JoinHandle<()>,
 }
 
@@ -91,19 +91,20 @@ impl Server {
 
         let server = Server {
             receiver,
-            runtime,
+            runtime: Some(runtime),
             thread_handle,
         };
         (server, sender)
     }
+}
 
-    pub fn stop(self) {
-        let Server {
-            runtime,
-            thread_handle,
-            ..
-        } = self;
-        thread_handle.abort();
-        runtime.shutdown_timeout(Duration::from_secs(3));
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.thread_handle.abort();
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_timeout(Duration::from_secs(3));
+        } else {
+            panic!("Incorrect usage of Server struct, consult somebody");
+        }
     }
 }

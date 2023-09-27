@@ -1,12 +1,23 @@
 import * as PIXI from "https://cdn.jsdelivr.net/npm/pixi.js@7.2.0-rc/+esm";
 
+function connectToBackend(onmessage) {
+  if (!("WebSocket" in window)) {
+    alert("WebSocket is not supported by your Browser!");
+  }
+
+  const ws = new WebSocket("ws://localhost:9090");
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => ws.send("Hello, client here!");
+  ws.onmessage = onmessage;
+  ws.onclose = () => alert("Connection is closed...");
+}
 
 function createCircleTexture(app) {
   // Create template shape.
   const templateShape = new PIXI.Graphics()
     .beginFill(0xffffff)
     .lineStyle({ width: 1, color: 0x333333, alignment: 0 })
-    .drawCircle(0, 0, 20);
+    .drawCircle(0, 0, 5);
 
   // Create texture.
   const { width, height } = templateShape;
@@ -31,6 +42,9 @@ function createCircleTexture(app) {
   return renderTexture;
 }
 
+
+
+
 async function initializeGraphics() {
   const app = new PIXI.Application({ background: '#1099bb', resizeTo: window });
 
@@ -51,78 +65,47 @@ async function initializeGraphics() {
   app.ticker.add((delta) => {
     const maxChildren = 100;
 
-    if (elapsed_frames % 60 === 0) {
-      console.log(dataContainer.children.length);
-    }
+    // if (elapsed_frames % 60 === 0) {
+    //   console.log(dataContainer.children.length);
+    // }
 
     while (dataContainer.children.length > 0 && dataContainer.children[0].position.x < dataOffset - app.screen.width) {
-      console.log("before", dataContainer.children.length);
       dataContainer.removeChildAt(0);
-      console.log("after", dataContainer.children.length);
     }
 
-    const shape = new PIXI.Sprite(circleTexture);
-    shape.anchor.set(0.5);
-    shape.position.x = dataOffset;
-    shape.position.y = app.screen.height * Math.random();
-    dataContainer.addChild(shape);
-
-    dataOffset += delta * 500;
-    dataContainer.position.x = app.screen.width - dataOffset;
+    // const shape = new PIXI.Sprite(circleTexture);
+    // shape.anchor.set(0.5);
+    // shape.position.x = dataOffset;
+    // shape.position.y = app.screen.height * (Math.sin(elapsed) + 1) / 2;
+    // dataContainer.addChild(shape);
 
     elapsed_frames++;
     elapsed += delta;
   });
+
+  connectToBackend((message) => {
+    dataOffset += 5;
+    dataContainer.position.x = app.screen.width - dataOffset;
+
+    const floats = new Float32Array(message.data);
+
+    const addPoint = (value, scale, tint) => {
+      const shape = new PIXI.Sprite(circleTexture);
+      shape.anchor.set(0.5);
+      shape.scale.set(scale);
+      shape.position.x = dataOffset;
+      shape.position.y = app.screen.height * value;
+      shape.tint = tint;
+      dataContainer.addChild(shape);
+    };
+
+    addPoint(0.2 - 0.2 * 0.002 * floats[0], 1, "#FF0000");
+    addPoint(0.4 - 0.2 * 0.002 * floats[1], 1, "#00FF00");
+    addPoint(0.6 - 0.2 * 0.002 * floats[2], 1, "#0000FF");
+    addPoint(0.8 - 0.2 * 0.002 * floats[3], 1, "#FFFFFF");
+    const sum = floats[1] + floats[2];
+    addPoint(1 - 0.2 * 0.002 * sum / 2, 1, "#000000");
+  });
 }
 
 initializeGraphics();
-
-function connectToBackend() {
-  if (!("WebSocket" in window)) {
-    alert("WebSocket is not supported by your Browser!");
-  }
-
-  const ws = new WebSocket("ws://localhost:9090");
-  ws.onopen = () => {
-    ws.send("Hello, client here!");
-  };
-  ws.onmessage = (evt) => {
-    const { data } = evt;
-    console.log(data);
-  };
-  ws.onclose = () => {
-    alert("Connection is closed...");
-  };
-}
-
-function oldThreeJs() {
-  // import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.156.1/+esm";
-  const THREE = {};
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-  camera.position.z = 4;
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setClearColor("#000000");
-  renderer.setSize(window.innerWidth, window.innerHeight);
-
-  document.body.appendChild(renderer.domElement);
-
-  const geometry = new THREE.BoxGeometry(1, 1, 1);
-  const material = new THREE.MeshBasicMaterial({ color: "#433F81" });
-  const cube = new THREE.Mesh(geometry, material);
-
-  scene.add(cube);
-
-  function render() {
-    requestAnimationFrame(render);
-
-    cube.rotation.x += 0.01;
-    cube.rotation.y += 0.01;
-
-    renderer.render(scene, camera);
-  };
-
-  render();
-}

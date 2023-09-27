@@ -74,6 +74,10 @@ impl Dft {
         }
     }
 
+    pub fn serialized_size(&self) -> usize {
+        Dft::output_byte_size(self.size()) + mem::size_of::<i32>()
+    }
+
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
             let size = self.simple.len();
@@ -96,12 +100,16 @@ impl Dft {
 
         std::mem::swap(&mut self.simple, &mut self.simple_old);
 
-        // Experimentally determined factor, scales the majority of frequencies to [0..1].
-        let factor = 1f32 / (0.27 * self.input.len() as f32);
         for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
-            let next_val = output.norm() * factor;
-            *simple = 0f32.max(*simple - 0.015).max(next_val);
+            *simple = output.norm();
         }
+
+        // Experimentally determined factor, scales the majority of frequencies to [0..1].
+        // let factor = 1f32 / (0.27 * self.input.len() as f32);
+        // for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
+        //     let next_val = output.norm() * factor;
+        //     *simple = 0f32.max(*simple - 0.015).max(next_val);
+        // }
     }
 
     fn run_inverse(&mut self) {

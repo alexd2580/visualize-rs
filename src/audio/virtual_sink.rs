@@ -18,7 +18,8 @@ impl Display for VirtualSink {
 impl VirtualSink {
     pub fn new(name: String) -> Result<Self, Error> {
         debug!("Creating virtual sink: '{name}'");
-        let sink_name_arg = format!("sink_name={name}");
+        let sink_name_arg =
+            format!("sink_name=\"{name}\" sink_properties=device.description=\"{name}\"");
         let mut id = exec_command(&["pactl", "load-module", "module-null-sink", &sink_name_arg])?;
         id = id.trim_end().to_owned();
         let virtual_sink = VirtualSink { name, id };

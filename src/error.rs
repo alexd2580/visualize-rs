@@ -15,9 +15,11 @@ pub enum Error {
     Io(std::io::Error),
     Parse(glsl::parser::ParseError),
     Cpal(Cpal),
-    Pulsectl(pulsectl::ControllerError),
+    Libpulse(libpulse_binding::error::PAErr),
     Shaderc(shaderc::Error),
 }
+
+pub type VResult<T> = Result<T, Error>;
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -30,7 +32,7 @@ impl Display for Error {
                 write!(f, "Failed to parse GLSL\n{info}")
             }
             Error::Cpal(error) => write!(f, "CPAL Error\n{error:?}"),
-            Error::Pulsectl(error) => write!(f, "Pulsectl Error\n{error:?}"),
+            Error::Libpulse(error) => write!(f, "Pulse Error\n{error:?}"),
             Error::Shaderc(error) => write!(f, "Shaderc Error\n{error:?}"),
         }
     }
@@ -78,9 +80,9 @@ impl From<cpal::PlayStreamError> for Error {
     }
 }
 
-impl From<pulsectl::ControllerError> for Error {
-    fn from(value: pulsectl::ControllerError) -> Self {
-        Self::Pulsectl(value)
+impl From<libpulse_binding::error::PAErr> for Error {
+    fn from(value: libpulse_binding::error::PAErr) -> Self {
+        Self::Libpulse(value)
     }
 }
 

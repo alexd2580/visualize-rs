@@ -4,7 +4,9 @@ use log::{debug, error, warn};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::{error::Error, thread_shared::ThreadShared};
+use crate::{error::{Error, VResult}, thread_shared::ThreadShared};
+
+use self::{routing::Routing, stereo::Stereo};
 
 pub mod high_pass;
 pub mod low_pass;
@@ -36,47 +38,34 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
         .ok_or_else(|| Error::Local("Failed to choose stream config".to_owned()))
 }
 
-pub struct Audio {
+struct Cpal {
     host: cpal::Host,
     pub sample_rate: usize,
-    ring_buffer: ThreadShared<stereo::Stereo>,
-
-    _virtual_sink: Option<virtual_sink::VirtualSink>,
-    routing: Option<routing::Routing>,
-    default_sink: Option<pulsectl::controllers::types::DeviceInfo>,
-
-    input_stream: Option<cpal::Stream>,
-    output_stream: Option<cpal::Stream>,
 }
 
-impl Deref for Audio {
-    type Target = stereo::Stereo;
-
-    fn deref(&self) -> &Self::Target {
-        self.ring_buffer.read()
-    }
-}
-
-impl Audio {
-    pub fn buffer_size(&self) -> usize {
-        self.ring_buffer.read().left.size
+impl Cpal {
+    fn cpal_sample_rate(&self) -> cpal::SampleRate {
+        cpal::SampleRate(u32::try_from(self.sample_rate).unwrap())
     }
 
-    fn input_device(&self) -> Result<cpal::Device, Error> {
+    fn default_input_device(&self) -> Result<cpal::Device, Error> {
         self.host
             .default_input_device()
             .ok_or_else(|| Error::Local("Failed to get default input device.".to_owned()))
     }
 
-    fn run_input_stream<Callback>(&self, callback: Callback) -> Result<cpal::Stream, Error>
+    fn run_input_stream<Callback>(
+        &self,
+        device: cpal::Device,
+        callback: Callback,
+    ) -> Result<cpal::Stream, Error>
     where
         Callback: FnMut(&[f32], &cpal::InputCallbackInfo) + Send + 'static,
     {
-        let device = self.input_device()?;
         let config = choose_stream_config(
             device.supported_input_configs()?,
             2,
-            cpal::SampleRate(u32::try_from(self.sample_rate).unwrap()),
+            self.cpal_sample_rate(),
             cpal::SampleFormat::F32,
         )?;
 
@@ -86,31 +75,24 @@ impl Audio {
         Ok(stream)
     }
 
-    fn init_input_stream(&mut self) -> Result<(), Error> {
-        debug!("Initializing input stream");
-        let buffer = self.ring_buffer.clone();
-        let read = move |samples: &[f32], _: &cpal::InputCallbackInfo| {
-            buffer.write().write_samples(samples);
-        };
-        self.input_stream = Some(self.run_input_stream(read)?);
-        Ok(())
-    }
-
-    fn output_device(&self) -> Result<cpal::Device, Error> {
+    fn default_output_device(&self) -> Result<cpal::Device, Error> {
         self.host
             .default_output_device()
             .ok_or_else(|| Error::Local("Failed to get default output device.".to_owned()))
     }
 
-    fn run_output_stream<Callback>(&self, callback: Callback) -> Result<cpal::Stream, Error>
+    fn run_output_stream<Callback>(
+        &self,
+        device: cpal::Device,
+        callback: Callback,
+    ) -> Result<cpal::Stream, Error>
     where
         Callback: FnMut(&mut [f32], &cpal::OutputCallbackInfo) + Send + 'static,
     {
-        let device = self.output_device()?;
         let config = choose_stream_config(
             device.supported_output_configs()?,
             2,
-            cpal::SampleRate(u32::try_from(self.sample_rate).unwrap()),
+            self.cpal_sample_rate(),
             cpal::SampleFormat::F32,
         )?;
 
@@ -120,9 +102,31 @@ impl Audio {
         Ok(stream)
     }
 
-    fn init_output_stream(&mut self) -> Result<(), Error> {
+    pub fn new() -> Self {
+        Cpal {
+            host: cpal::default_host(),
+            sample_rate: 44100,
+        }
+    }
+}
+
+struct DelayedOutput {
+    routing: routing::Routing,
+    default_sink: routing::types::DeviceInfo,
+    #[allow(dead_code)]
+    virtual_output_device: virtual_sink::VirtualSink,
+    #[allow(dead_code)]
+    output_stream: cpal::Stream,
+}
+
+impl DelayedOutput {
+    fn init_output_stream(
+        cpal: &Cpal,
+        device: cpal::Device,
+        ring_buffer: &ThreadShared<Stereo>,
+    ) -> Result<cpal::Stream, Error> {
         debug!("Initializing output stream");
-        let buffer = self.ring_buffer.clone();
+        let buffer = ring_buffer.clone();
         let mut read_index = 0;
         let mut insert_delay_samples = 5000;
         // If we want to delay the input stream, then we need to be able to do so.
@@ -142,7 +146,7 @@ impl Audio {
             }
 
             // No more delay samples.
-            let stereo::Stereo { left, right } = buffer.read();
+            let stereo::Stereo { left, right, .. } = buffer.read();
             let read_buf_size = left.size;
 
             // Unfurled write index.
@@ -203,87 +207,128 @@ impl Audio {
             }
         };
 
-        self.output_stream = Some(self.run_output_stream(write)?);
-        Ok(())
+        cpal.run_output_stream(device, write)
     }
 
-    fn routing(&mut self) -> &mut routing::Routing {
-        self.routing.as_mut().unwrap()
-    }
+    fn new(cpal: &Cpal, ring_buffer: &ThreadShared<Stereo>) -> Result<Self, Error> {
+        let mut routing = routing::Routing::new()?;
 
-    pub fn new(seconds: u32, delayed_echo: bool) -> Result<Self, Error> {
-        let host = cpal::default_host();
-
-        // Create ring buffer.
-        let sample_rate = 44100;
-        let buffer_size = usize::try_from(seconds).unwrap() * sample_rate; // TODO
-        let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
+        // Store the current output device.
+        let default_sink = routing.get_default_sink_device()?;
 
         // Initialize virtual sink.
-        let virtual_sink_name = "visualize-rs".to_owned();
-        let virtual_sink = delayed_echo
-            .then(|| virtual_sink::VirtualSink::new(virtual_sink_name.clone()))
-            .transpose()?;
+        let virtual_device_name = "Audio collector";
+        let virtual_output_device = virtual_sink::VirtualSink::new(virtual_device_name.to_owned())?;
 
-        let mut routing = delayed_echo.then(routing::Routing::new).transpose()?;
-        let default_sink = delayed_echo
-            .then(|| routing.as_mut().unwrap().default_sink())
-            .transpose()?;
+        // routing.print()?;
 
-        let mut audio = Audio {
-            host,
-            sample_rate,
-            ring_buffer,
-            _virtual_sink: virtual_sink,
-            routing,
-            default_sink,
-            input_stream: None,
-            output_stream: None,
+        let virtual_sink = routing.get_sink_device_by_name(virtual_device_name)?;
+        let virtual_monitor_name = format!("{virtual_device_name}.monitor");
+        let virtual_monitor = routing.get_source_device_by_name(&virtual_monitor_name)?;
+
+        // Run the delayed output stream on the current default device.
+        let output_stream = {
+            let write_device = cpal.default_output_device()?;
+            DelayedOutput::init_output_stream(cpal, write_device, ring_buffer)?
         };
 
-        // Start the streams.
-        // TODO redirect default devices etcetc
-        audio.init_input_stream()?;
-        if delayed_echo {
-            audio.init_output_stream()?;
+        let app_name = "visualize-rs";
+        let record_streams = routing.list_record_applications()?;
+        let visualizer_record = Routing::find_stream_by_name(&record_streams, app_name);
+        let playback_streams = routing.list_playback_applications()?;
+        let visualizer_playback = Routing::find_stream_by_name(&playback_streams, app_name);
 
-            let routing = audio.routing();
-            let default_output = routing.default_sink()?;
-            let (virtual_sink, virtual_monitor) =
-                routing.get_sink_and_monitor_device(&virtual_sink_name)?;
-            let (visualizer_record, visualizer_playback) =
-                routing.get_record_and_playback_streams(&virtual_sink_name)?;
+        if let (Some(visualizer_record), Some(visualizer_playback)) =
+            (visualizer_record, visualizer_playback)
+        {
+            let vis_rec_name = visualizer_record.name.as_ref().unwrap();
+            debug!("App record stream: {vis_rec_name}");
+            let vis_out_name = visualizer_playback.name.as_ref().unwrap();
+            debug!("App output stream: {vis_out_name}");
 
-            if let (Some(visualizer_record), Some(visualizer_playback)) =
-                (visualizer_record, visualizer_playback)
-            {
-                debug!(
-                    "Visualizer record: {}; playback: {}",
-                    visualizer_record.name.as_ref().unwrap(),
-                    visualizer_playback.name.as_ref().unwrap()
-                );
-                routing.set_default_sink_device(&virtual_sink)?;
-                routing.set_record_input(&visualizer_record, &virtual_monitor)?;
-                routing.set_playback_output(&visualizer_playback, &default_output)?;
-            } else {
-                warn!("Can't find app '{virtual_sink_name}' in record or playback streams");
-            }
+            routing.set_default_sink_device(&virtual_sink.name.as_ref().unwrap())?;
+            routing.set_record_input(&visualizer_record, &virtual_monitor)?;
+            routing.set_playback_output(&visualizer_playback, &default_sink)?;
+        } else {
+            warn!("Can't find app '{app_name}' in record or playback streams");
         }
 
-        Ok(audio)
+        Ok(DelayedOutput {
+            routing,
+            default_sink,
+            virtual_output_device,
+            output_stream,
+        })
     }
 }
 
-impl Drop for Audio {
+impl Drop for DelayedOutput {
     fn drop(&mut self) {
-        if let (Some(routing), Some(default_sink)) = (&mut self.routing, &self.default_sink) {
-            let result = routing.set_default_sink_device(default_sink);
-            if let Err(error) = result {
-                error!(
-                    "Failed to set default sink back to {}: {error}",
-                    default_sink.name.as_ref().unwrap()
-                );
-            }
+        let sink_name = self.default_sink.name.as_ref().unwrap();
+        let result = self.routing.set_default_sink_device(sink_name);
+        if let Err(error) = result {
+            error!("Failed to set default sink back to {sink_name}: {error}",);
         }
+    }
+}
+
+pub struct Audio {
+    cpal: Cpal,
+    ring_buffer: ThreadShared<stereo::Stereo>,
+    #[allow(dead_code)]
+    input_stream: cpal::Stream,
+    #[allow(dead_code)]
+    delayed_output: Option<DelayedOutput>,
+}
+
+impl Deref for Audio {
+    type Target = stereo::Stereo;
+
+    fn deref(&self) -> &Self::Target {
+        self.ring_buffer.read()
+    }
+}
+
+impl Audio {
+    pub fn sample_rate(&self) -> usize {
+        self.cpal.sample_rate
+    }
+
+    pub fn buffer_size(&self) -> usize {
+        self.ring_buffer.read().left.size
+    }
+
+    fn init_input_stream(
+        cpal: &Cpal,
+        device: cpal::Device,
+        ring_buffer: &ThreadShared<Stereo>,
+    ) -> Result<cpal::Stream, Error> {
+        debug!("Initializing input stream");
+        let buffer = ring_buffer.clone();
+        let read = move |samples: &[f32], _: &cpal::InputCallbackInfo| {
+            buffer.write().write_samples(samples);
+        };
+        cpal.run_input_stream(device, read)
+    }
+
+    pub fn new(seconds: u32, delayed_echo: bool) -> VResult<Self> {
+        let cpal = Cpal::new();
+
+        // TODO todo what? unwrap? sample rate?
+        let buffer_size = usize::try_from(seconds).unwrap() * cpal.sample_rate;
+        let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
+
+        let read_device = cpal.default_input_device()?;
+        let input_stream = Audio::init_input_stream(&cpal, read_device, &ring_buffer)?;
+        let delayed_output = delayed_echo
+            .then(|| DelayedOutput::new(&cpal, &ring_buffer))
+            .transpose()?;
+
+        Ok(Audio {
+            cpal,
+            ring_buffer,
+            input_stream,
+            delayed_output,
+        })
     }
 }

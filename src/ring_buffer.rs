@@ -84,6 +84,10 @@ impl<T: Copy> RingBuffer<T> {
         self.advance();
     }
 
+    pub fn serialized_size(&self) -> usize {
+        self.size * mem::size_of::<T>() + 2 * mem::size_of::<i32>()
+    }
+
     pub fn write_to_buffer(&self, buffer: &mut [T]) {
         let (start, end) = self.unwrap();
         let size = buffer.len();

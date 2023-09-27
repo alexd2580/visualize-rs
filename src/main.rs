@@ -1,10 +1,13 @@
-use std::{mem, rc::Rc, sync::Arc, time};
+use std::{rc::Rc, time};
 
+use cell::Cell;
 use clap::Parser;
-use server::FrameSender;
 
+mod analysis;
 mod audio;
+mod averages;
 mod beat_analysis;
+mod cell;
 mod dft;
 mod error;
 mod ring_buffer;
@@ -15,63 +18,45 @@ mod utils;
 mod vulkan;
 mod window;
 
-/// Note the reverse drop order.
+// Required to use run_return on event loop.
+use winit::platform::run_return::EventLoopExtRunReturn;
+
 struct Visualizer {
-    epoch: time::Instant,
-
-    available_samples: usize,
-    avg_available_samples: f32,
-    avg_available_samples_alpha: f32,
-
-    _frequency_band_border_indices: [usize; 8],
-    beat_analysis: beat_analysis::BeatAnalysis,
-
-    audio: audio::Audio,
     signal_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    signal_dft: dft::Dft,
     signal_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
-    low_pass: audio::low_pass::LowPass,
     low_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    low_pass_dft: dft::Dft,
     low_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
-    high_pass: audio::high_pass::HighPass,
     high_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    high_pass_dft: dft::Dft,
     high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
+    // let dft_result_size = Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
+    // history: History::new(history_size),
+    // history_gpu: vulkan.new_multi_buffer("history", history_gpu_size, Some(1))?,
+    // // Averages.
+    // long_avg: AlphaAvg::new(0.99),
+    // short_avg: WindowedAvg::new((0.2 * frame_rate as f32) as usize),
+    // // Beat detection.
+    // noise_threshold_factor: 0.25,
+    // beat_sigma_threshold_factor: 2.2,
+    // is_high: false,
+    // is_beat: false,
+    // // BPM detection.
+    // autocorrelation: Dft::new(8 * frame_rate),
+    // autocorrelation_gpu: vulkan.new_multi_buffer(
+    //     "autocorrelation",
+    //     autocorrelation_gpu_size,
+    //     Some(1),
+    // )?,
+
+    // These should be dropped last.
     images: Vec<Rc<vulkan::multi_image::MultiImage>>,
-
     vulkan: vulkan::Vulkan,
-
-    timer: timer::Timer,
-
-    broadcast: Arc<FrameSender>,
-}
-
-fn dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: usize) -> usize {
-    // For reference see
-    // https://stackoverflow.com/questions/4364823/how-do-i-obtain-the-frequencies-of-each-value-in-an-fft
-    // 0:   0 * 44100 / 1024 =     0.0 Hz
-    // 1:   1 * 44100 / 1024 =    43.1 Hz
-    // 2:   2 * 44100 / 1024 =    86.1 Hz
-    // 3:   3 * 44100 / 1024 =   129.2 Hz
-    (frequency as f32 * dft_size as f32 / sample_rate as f32).round() as usize
 }
 
 impl Visualizer {
-    fn run_dft(
-        buffer: &ring_buffer::RingBuffer<f32>,
-        dft: &mut dft::Dft,
-        dft_gpu: &vulkan::multi_buffer::MultiBuffer,
-    ) {
-        buffer.write_to_buffer(dft.get_input_vec());
-        dft.run_transform();
-        dft.write_to_pointer(dft_gpu.mapped(0));
-    }
-
-    fn reinitialize_images(&mut self) -> Result<(), error::Error> {
+    fn reinitialize_images(&mut self) -> error::VResult<()> {
         // Drop old images.
         self.images.clear();
 
@@ -98,135 +83,54 @@ impl Visualizer {
     }
 
     fn new(
-        window: &window::Window,
         args: &Args,
-        broadcast: Arc<FrameSender>,
-    ) -> Result<Visualizer, error::Error> {
-        let mut vulkan = vulkan::Vulkan::new(window, &args.shader_paths, args.vsync)?;
-        let images = Vec::new();
+        analysis: &analysis::Analysis,
+    ) -> error::VResult<(winit::event_loop::EventLoop<()>, Visualizer)> {
+        let (event_loop, window) = window::Window::new()?;
+        let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths, !args.no_vsync)?;
 
-        // TODO dynamic?
-        let frame_rate = 60;
+        let signal_gpu =
+            vulkan.new_multi_buffer("signal", analysis.audio.signal.serialized_size(), Some(1))?;
+        let low_pass_gpu =
+            vulkan.new_multi_buffer("low_pass", analysis.low_pass.serialized_size(), Some(1))?;
+        let high_pass_gpu =
+            vulkan.new_multi_buffer("high_pass", analysis.high_pass.serialized_size(), Some(1))?;
 
-        let audio = audio::Audio::new(args.audio_buffer_sec, args.passthrough)?;
-        let audio_buffer_size = audio.buffer_size();
-        let audio_buffer_bytes =
-            audio_buffer_size * mem::size_of::<f32>() + 2 * mem::size_of::<i32>();
-        let signal_gpu = vulkan.new_multi_buffer("signal", audio_buffer_bytes, Some(1))?;
-
-        let low_pass = audio::low_pass::LowPass::new(audio_buffer_size, 0.02);
-        let low_pass_gpu = vulkan.new_multi_buffer("low_pass", audio_buffer_bytes, Some(1))?;
-
-        let high_pass = audio::high_pass::HighPass::new(audio_buffer_size, 0.1);
-        let high_pass_gpu = vulkan.new_multi_buffer("high_pass", audio_buffer_bytes, Some(1))?;
-
-        let dft_size = args.dft_size;
-        let dft_window_per_s = audio.sample_rate as f32 / dft_size as f32;
-        let dft_min_fq = dft_window_per_s * 1f32;
-        let dft_max_fq = dft_window_per_s * dft_size as f32 / 2f32;
-        log::info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
-
-        let frequency_band_borders = [16, 60, 250, 500, 2000, 4000, 6000, 22000];
-        let frequency_band_border_indices = frequency_band_borders
-            .map(|frequency| dft_index_of_frequency(frequency, audio.sample_rate, dft_size));
-
-        let dft_result_size = dft::Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
-
-        let signal_dft = dft::Dft::new(args.dft_size);
-        let signal_dft_gpu = vulkan.new_multi_buffer("signal_dft", dft_result_size, Some(1))?;
-
-        let low_pass_dft = dft::Dft::new(args.dft_size);
-        let low_pass_dft_gpu = vulkan.new_multi_buffer("low_pass_dft", dft_result_size, Some(1))?;
-
-        let high_pass_dft = dft::Dft::new(args.dft_size);
-        let high_pass_dft_gpu =
-            vulkan.new_multi_buffer("high_pass_dft", dft_result_size, Some(1))?;
-
-        let beat_analysis = beat_analysis::BeatAnalysis::new(&mut vulkan)?;
+        let signal_dft_gpu = vulkan.new_multi_buffer(
+            "signal_dft",
+            analysis.signal_dft.serialized_size(),
+            Some(1),
+        )?;
+        let low_pass_dft_gpu = vulkan.new_multi_buffer(
+            "low_pass_dft",
+            analysis.low_pass_dft.serialized_size(),
+            Some(1),
+        )?;
+        let high_pass_dft_gpu = vulkan.new_multi_buffer(
+            "high_pass_dft",
+            analysis.high_pass_dft.serialized_size(),
+            Some(1),
+        )?;
 
         let mut visualizer = Self {
-            broadcast,
-            epoch: time::Instant::now(),
-            timer: timer::Timer::new(0.9),
-            available_samples: 0,
-            avg_available_samples: 44100f32 / 60f32,
-            avg_available_samples_alpha: 0.95,
-            audio,
             signal_gpu,
-            signal_dft,
             signal_dft_gpu,
-            low_pass,
             low_pass_gpu,
-            low_pass_dft,
             low_pass_dft_gpu,
-            high_pass,
             high_pass_gpu,
-            high_pass_dft,
             high_pass_dft_gpu,
-            _frequency_band_border_indices: frequency_band_border_indices,
-            beat_analysis,
-            images,
+            images: Vec::new(),
             vulkan,
         };
 
         visualizer.reinitialize_images()?;
-        Ok(visualizer)
+        Ok((event_loop, visualizer))
     }
 
-    /// Returns the read index (start of data to read), write index (index at which new data will
-    /// be written (end of data to read) and the size of the ring buffer.
-    fn data_indices(&mut self) -> (usize, usize, usize) {
-        let read_index = self.low_pass.write_index;
-        let write_index = self.audio.left.write_index;
-        let buf_size = self.audio.left.data.len();
-
-        // Total available samples.
-        let available_samples = if write_index < read_index {
-            write_index + buf_size - read_index
-        } else {
-            write_index - read_index
-        };
-
-        // New available in this frame.
-        let new_available = available_samples - self.available_samples;
-        self.avg_available_samples = self.avg_available_samples * self.avg_available_samples_alpha
-            + new_available as f32 * (1f32 - self.avg_available_samples_alpha);
-
-        // `+5` makes it so that i try to display more frames without lagging behind too much.
-        // This is a magic number, might be different for different FPS.
-        let mut consume_samples = self.avg_available_samples as usize + 2;
-        let (sample_underrun, ok) = consume_samples.overflowing_sub(available_samples);
-        let sample_underrun_pct = 100f32 * sample_underrun as f32 / consume_samples as f32;
-        if !ok && consume_samples > available_samples {
-            if sample_underrun_pct > 50f32 {
-                log::warn!("Sample underrun by {sample_underrun} ({sample_underrun_pct:.2}%)");
-            }
-            consume_samples = available_samples;
-        }
-
-        let sample_overrun_pct =
-            100f32 * available_samples as f32 / (consume_samples as f32 + 1f32);
-        if ok && sample_overrun_pct > 2000f32 {
-            log::warn!("Sample overrun by {available_samples} ({sample_overrun_pct:.2}%)");
-        }
-
-        self.available_samples = available_samples - consume_samples;
-
-        let write_index = (read_index + consume_samples) % buf_size;
-
-        (read_index, write_index, buf_size)
-    }
-
-    fn run_vulkan(&mut self) -> Result<(), error::Error> {
-        use vulkan::Value::{Bool, F32};
-
-        let mut push_constant_values = std::collections::HashMap::new();
-
-        let is_beat = self.beat_analysis.is_beat;
-        push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
-        let now = self.epoch.elapsed().as_secs_f32();
-        push_constant_values.insert("now".to_owned(), F32(now));
-
+    fn run_vulkan(
+        &mut self,
+        push_constant_values: std::collections::HashMap<String, vulkan::Value>,
+    ) -> error::VResult<()> {
         match unsafe { self.vulkan.tick(&push_constant_values)? } {
             None => (),
             Some(vulkan::Event::Resized) => self.reinitialize_images()?,
@@ -234,75 +138,41 @@ impl Visualizer {
         Ok(())
     }
 
-    fn tick(&mut self) -> winit::event_loop::ControlFlow {
-        self.timer.section("Outside of loop");
+    fn tick(&mut self, analysis: &analysis::Analysis) -> winit::event_loop::ControlFlow {
+        use vulkan::Value::{Bool, F32};
 
-        let (read_index, write_index, buf_size) = self.data_indices();
+        let read_index = analysis.read_index;
+        let write_index = analysis.write_index;
 
-        if write_index < read_index {
-            for index in read_index..buf_size {
-                let x = self.audio.left.data[index];
-                self.low_pass.sample(x);
-                self.high_pass.sample(x);
-            }
-            for index in 0..write_index {
-                let x = self.audio.left.data[index];
-                self.low_pass.sample(x);
-                self.high_pass.sample(x);
-            }
-        } else {
-            for index in read_index..write_index {
-                let x = self.audio.left.data[index];
-                self.low_pass.sample(x);
-                self.high_pass.sample(x);
-            }
-        }
-
-        self.timer.section("Filters");
-
-        self.audio
-            .left
+        analysis
+            .audio
+            .signal
             .write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
-
-        self.low_pass
+        analysis
+            .low_pass
             .write_to_pointer(read_index, write_index, self.low_pass_gpu.mapped(0));
-
-        self.high_pass
+        analysis
+            .high_pass
             .write_to_pointer(read_index, write_index, self.high_pass_gpu.mapped(0));
 
-        self.timer.section("Filters to GPU");
+        analysis
+            .signal_dft
+            .write_to_pointer(self.signal_dft_gpu.mapped(0));
+        analysis
+            .low_pass_dft
+            .write_to_pointer(self.low_pass_dft_gpu.mapped(0));
+        analysis
+            .high_pass_dft
+            .write_to_pointer(self.high_pass_dft_gpu.mapped(0));
 
-        Self::run_dft(&self.audio.left, &mut self.signal_dft, &self.signal_dft_gpu);
+        let mut push_constant_values = std::collections::HashMap::new();
 
-        Self::run_dft(
-            &self.low_pass,
-            &mut self.low_pass_dft,
-            &self.low_pass_dft_gpu,
-        );
+        let is_beat = analysis.beat_analysis.is_beat;
+        push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
+        let now = analysis.epoch.elapsed().as_secs_f32();
+        push_constant_values.insert("now".to_owned(), F32(now));
 
-        Self::run_dft(
-            &self.high_pass,
-            &mut self.high_pass_dft,
-            &self.high_pass_dft_gpu,
-        );
-
-        let beat_dft = &self.low_pass_dft;
-        let beat_dft_lower = dft_index_of_frequency(35, self.audio.sample_rate, beat_dft.size());
-        let beat_dft_upper = dft_index_of_frequency(125, self.audio.sample_rate, beat_dft.size());
-        let beat_dft_sum_size = beat_dft_upper - beat_dft_lower;
-        let bass_frequencies = &beat_dft.simple[beat_dft_lower..beat_dft_upper];
-
-        self.broadcast
-            .send(bass_frequencies.to_owned())
-            .expect("Failed to broadcast frame bass frequencies");
-
-        let beat_dft_sum = bass_frequencies.iter().fold(0f32, |a, b| a + b);
-        self.beat_analysis
-            .sample(beat_dft_sum / beat_dft_sum_size as f32);
-
-        self.timer.section("DFTs and DFTs to GPU");
-
-        let result = match self.run_vulkan() {
+        let result = match self.run_vulkan(push_constant_values) {
             Ok(()) => winit::event_loop::ControlFlow::Poll,
             Err(err) => {
                 log::error!("{err}");
@@ -310,11 +180,7 @@ impl Visualizer {
             }
         };
 
-        self.timer.section("Vulkan");
-
-        if self.vulkan.num_frames % 600 == 0 {
-            self.timer.print();
-        }
+        self.vulkan.num_frames += 1;
 
         result
     }
@@ -326,15 +192,9 @@ impl Drop for Visualizer {
     }
 }
 
-impl window::App for Visualizer {
-    fn loop_body(&mut self) -> winit::event_loop::ControlFlow {
-        self.tick()
-    }
-}
-
 /// Run an audio visualizer.
 #[derive(Parser, Debug, Clone)]
-struct Args {
+pub struct Args {
     /// The shader module path
     #[arg(short, long, num_args = 0.., default_value = "shaders/debug.comp")]
     shader_paths: Vec<std::path::PathBuf>,
@@ -348,22 +208,68 @@ struct Args {
     audio_buffer_sec: u32,
 
     /// Enable vsync
-    #[arg(short, long, default_value = "true", action = clap::ArgAction::Set)]
-    vsync: bool,
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    no_vsync: bool,
 
-    #[arg(short, long, default_value = "true", action = clap::ArgAction::Set)]
-    passthrough: bool,
+    /// Redirect the audio through a virtual pulseaudio sink
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    no_virtual_sink: bool,
+
+    /// Create a websocket server that echoes some info
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    websocket: bool,
+
+    /// Display the visualizer
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    headless: bool,
 }
 
-fn run_main(args: &Args) -> Result<(), error::Error> {
-    let (server, sender) = server::Server::start();
-    let mut window = window::Window::new()?;
-    {
-        let mut visualizer = Visualizer::new(&window, &args, sender)?;
-        log::info!("Running...");
-        window.run_main_loop(&mut visualizer);
+fn run_main(args: &Args) -> error::VResult<()> {
+    // Audio launches its own pulseaudio something threads, no ticking required.
+    let audio = audio::Audio::new(args.audio_buffer_sec, !args.no_virtual_sink)?;
+
+    // The websocket server launches a tokio runtime and listens to a channel.
+    // No ticking apart from populating the channel is required.
+    let server = args.websocket.then(|| server::Server::start());
+
+    // Analysis should be ticked once per "frame".
+    let analysis = {
+        let sender = server.as_ref().map(|(_, sender)| sender.clone());
+        let analysis = analysis::Analysis::new(args, audio, sender);
+        Cell::new(analysis)
+    };
+
+    // The visualizer should also be ticked once per frame.
+    let visualizer = (!args.headless)
+        .then(|| Visualizer::new(&args, &analysis.as_ref()))
+        .transpose()?;
+
+    // Choose the mainloop.
+    if let Some((mut event_loop, visualizer)) = visualizer {
+        // Use the visual winit-based mainloop.
+        let visualizer = Cell::new(visualizer);
+        event_loop.run_return(|event, &_, control_flow| {
+            *control_flow = window::handle_event(&event, &|| {
+                analysis.as_mut_ref().tick();
+                visualizer.as_mut_ref().tick(&analysis.as_ref())
+            });
+        });
+    } else {
+        // Use a custom headless one.
+        let run = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        ctrlc::set_handler({
+            let run = run.clone();
+            move || {
+                run.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+        .expect("Error setting Ctrl-C handler");
+        while run.load(std::sync::atomic::Ordering::SeqCst) {
+            analysis.as_mut_ref().tick();
+            std::thread::sleep(time::Duration::from_millis(16));
+        }
     }
-    server.stop();
+
     Ok(())
 }
 

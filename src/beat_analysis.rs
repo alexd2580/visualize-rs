@@ -1,100 +1,12 @@
-use std::{
-    mem,
-    ops::{Deref, DerefMut},
-    rc::Rc,
-};
+use std::mem;
 
 use crate::{
+    averages::{AlphaAvg, History, WindowedAvg},
     dft::Dft,
-    error::Error,
-    ring_buffer::RingBuffer,
-    utils::mix,
-    vulkan::{multi_buffer::MultiBuffer, Vulkan},
 };
-
-struct History {
-    pub values: RingBuffer<f32>,
-    pub min: f32,
-    pub max: f32,
-}
-
-impl Deref for History {
-    type Target = RingBuffer<f32>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
-}
-
-impl DerefMut for History {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.values
-    }
-}
-
-impl History {
-    fn new(num_samples: usize) -> Self {
-        History {
-            values: RingBuffer::new(num_samples),
-            min: 0f32,
-            max: 0f32,
-        }
-    }
-}
-
-struct AlphaAvg {
-    pub alpha: f32,
-    pub avg: f32,
-}
-
-impl AlphaAvg {
-    fn new(alpha: f32) -> Self {
-        AlphaAvg { alpha, avg: 0f32 }
-    }
-
-    fn sample(&mut self, x: f32) {
-        self.avg = mix(self.avg, x, self.alpha);
-    }
-}
-
-struct WindowedAvg {
-    pub size: usize,
-
-    sum: f32,
-    pub avg: f32,
-
-    square_sum: f32,
-    square_avg: f32,
-
-    pub sd: f32,
-}
-
-impl WindowedAvg {
-    fn new(size: usize) -> Self {
-        WindowedAvg {
-            size,
-            sum: 0f32,
-            avg: 0f32,
-            square_sum: 0f32,
-            square_avg: 0f32,
-            sd: 0f32,
-        }
-    }
-
-    fn sample(&mut self, old_x: f32, x: f32) {
-        self.sum += x - old_x;
-        self.avg = self.sum / self.size as f32;
-
-        self.square_sum += x.powf(2f32) - old_x.powf(2f32);
-        self.square_avg = self.square_sum / self.size as f32;
-
-        self.sd = (self.square_avg - self.avg.powf(2f32)).sqrt();
-    }
-}
 
 pub struct BeatAnalysis {
     history: History,
-    history_gpu: Rc<MultiBuffer>,
 
     // Averages.
     long_avg: AlphaAvg,
@@ -108,7 +20,6 @@ pub struct BeatAnalysis {
 
     // BPM detection.
     autocorrelation: Dft,
-    autocorrelation_gpu: Rc<MultiBuffer>,
 }
 
 fn wrap_index(pos_offset: usize, neg_offset: usize, len: usize) -> usize {
@@ -121,7 +32,7 @@ fn wrap_index(pos_offset: usize, neg_offset: usize, len: usize) -> usize {
 }
 
 impl BeatAnalysis {
-    pub fn new(vulkan: &mut Vulkan) -> Result<Self, Error> {
+    pub fn new() -> Self {
         let frame_rate = 60;
 
         let history_size = 8 * frame_rate;
@@ -129,9 +40,8 @@ impl BeatAnalysis {
 
         let autocorrelation_gpu_size = mem::size_of::<i32>() + history_size * mem::size_of::<f32>();
 
-        Ok(Self {
+        Self {
             history: History::new(history_size),
-            history_gpu: vulkan.new_multi_buffer("history", history_gpu_size, Some(1))?,
             // Averages.
             long_avg: AlphaAvg::new(0.99),
             short_avg: WindowedAvg::new((0.2 * frame_rate as f32) as usize),
@@ -142,12 +52,7 @@ impl BeatAnalysis {
             is_beat: false,
             // BPM detection.
             autocorrelation: Dft::new(8 * frame_rate),
-            autocorrelation_gpu: vulkan.new_multi_buffer(
-                "autocorrelation",
-                autocorrelation_gpu_size,
-                Some(1),
-            )?,
-        })
+        }
     }
 
     fn update_averages(&mut self, x: f32) {
@@ -173,17 +78,17 @@ impl BeatAnalysis {
 
     fn update_bpm(&mut self) {
         // Just the last value.
-        self.history.write_to_pointer(
-            self.history.offset_index(0, 1),
-            self.history.write_index,
-            self.history_gpu.mapped(0),
-        );
+        // self.history.write_to_pointer(
+        //     self.history.offset_index(0, 1),
+        //     self.history.write_index,
+        //     self.history_gpu.mapped(0),
+        // );
 
         self.history
             .write_to_buffer(self.autocorrelation.get_input_vec());
         self.autocorrelation.autocorrelate();
-        self.autocorrelation
-            .write_input_to_pointer(self.autocorrelation_gpu.mapped(0));
+        // self.autocorrelation
+        //     .write_input_to_pointer(self.autocorrelation_gpu.mapped(0));
 
         // if !self.is_beat {
         //     return;
