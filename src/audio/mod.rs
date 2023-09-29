@@ -4,7 +4,10 @@ use log::{debug, error, warn};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-use crate::{error::{Error, VResult}, thread_shared::ThreadShared};
+use crate::{
+    error::{Error, VResult},
+    thread_shared::ThreadShared,
+};
 
 use self::{routing::Routing, stereo::Stereo};
 
@@ -134,8 +137,10 @@ impl DelayedOutput {
 
         // TODO handle callbackinfo
         let write = move |mut data: &mut [f32], _callback_info: &cpal::OutputCallbackInfo| {
+            // Data is interleaved stereo.
             let mut data_num_samples = data.len() / 2;
 
+            // There are still delay samples to be inserted.
             if insert_delay_samples > 0 {
                 let how_many = insert_delay_samples.min(data_num_samples);
                 data[0..2 * how_many].fill(0.0);
@@ -145,19 +150,22 @@ impl DelayedOutput {
                 data_num_samples = data.len() / 2;
             }
 
-            // No more delay samples.
+            // No more delay samples, actually insert the data now.
             let stereo::Stereo { left, right, .. } = buffer.read();
             let read_buf_size = left.size;
 
-            // Unfurled write index.
+            // Unfurled write index (last available sample index).
             let write_index = if left.write_index < read_index {
                 left.write_index + read_buf_size
             } else {
                 left.write_index
             };
+
             // Where would i end up in the read_buffer after reading `data_num_samples`.
             let read_end_index = read_index + data_num_samples;
+            // If it turns out that i would read more samples than are available to me...
             if read_end_index > write_index {
+                // ... then we have a problem.
                 let underrun = read_end_index - write_index;
                 warn!("Audio sample underrun by {underrun} samples, filling with 0es.");
                 let fill_samples = underrun.min(data_num_samples);
@@ -166,36 +174,42 @@ impl DelayedOutput {
                 data_num_samples = data.len() / 2;
             }
 
-            if read_index + data_num_samples <= read_buf_size {
-                // Case where we can read one continuous stretch of samples.
+            let read_end_index = read_index + data_num_samples;
+
+            // Now two cases:
+            if read_end_index <= read_buf_size {
+                // The case where the last read index is within the buffer size
+                // (meaning we copy a continuous section of data).
                 for sample_index in 0..data_num_samples {
                     let buffer_index = read_index + sample_index;
                     data[2 * sample_index] = left.data[buffer_index];
                     data[2 * sample_index + 1] = right.data[buffer_index];
                 }
 
-                // Wrap read_index around.
-                read_index = if read_index + data_num_samples == read_buf_size {
-                    0
-                } else {
-                    read_index + data_num_samples
-                };
+                // Wrap read_index around. If the read section ends flush
+                // with the buffer end, then the new read index should be 0.
+                let end_flush = read_end_index == read_buf_size;
+                read_index = if end_flush { 0 } else { read_end_index };
             } else {
-                // Case where sample stretch wraps around in ring buffer.
+                // The case where the sample stretch wraps around in the ring buffer.
+                // These are the lengths of the respective sections.
                 let pt1 = left.size - read_index;
                 let pt2 = data_num_samples - pt1;
                 assert!(pt1 + pt2 == data_num_samples);
 
+                // Copy samples from end of ringbuffer.
                 for sample_index in 0..pt1 {
                     let buffer_index = read_index + sample_index;
                     data[2 * sample_index] = left.data[buffer_index];
                     data[2 * sample_index + 1] = right.data[buffer_index];
                 }
 
+                // Update pointers.
                 data = &mut data[2 * pt1..];
                 data_num_samples = data.len() / 2;
                 assert!(data_num_samples == pt2);
 
+                // Copy samples from start of ringbuffer.
                 for sample_index in 0..pt2 {
                     let buffer_index = sample_index;
                     data[2 * sample_index] = left.data[buffer_index];

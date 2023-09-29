@@ -9,7 +9,10 @@ function connectToBackend(onmessage) {
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => ws.send("Hello, client here!");
   ws.onmessage = onmessage;
-  ws.onclose = () => alert("Connection is closed...");
+  ws.onclose = () => {
+    // alert("Connection is closed...");
+    setTimeout(() => connectToBackend(onmessage), 3000);
+  }
 }
 
 function createCircleTexture(app) {
@@ -55,8 +58,12 @@ async function initializeGraphics() {
   const dataContainer = new PIXI.Container();
   let dataOffset = 0;
   dataContainer.position.x = app.screen.width - dataOffset;
-
   app.stage.addChild(dataContainer);
+
+  const gridContainer = new PIXI.Container();
+  let numGraphs = 4;
+  app.stage.addChild(gridContainer);
+
 
   let elapsed_frames = 0;
   let elapsed = 0;
@@ -89,6 +96,26 @@ async function initializeGraphics() {
 
     const floats = new Float32Array(message.data);
 
+    let count = floats.length / 5;
+    let slice_size = 1 / count;
+
+    if (count != numGraphs) {
+      while (gridContainer.children.length > 0) {
+        let child = gridContainer.children[0];
+        gridContainer.removeChild(child);
+        child.destroy();
+      }
+
+      for (let i = 0; i < count; i++) {
+        let graphics = new PIXI.Graphics();
+        graphics.position.set(0, i * slice_size * app.screen.height);
+        graphics.lineStyle(1, 0xffffff);
+        graphics.lineTo(app.screen.width, 0);
+        gridContainer.addChild(graphics);
+      }
+    }
+
+
     const addPoint = (value, scale, tint) => {
       const shape = new PIXI.Sprite(circleTexture);
       shape.anchor.set(0.5);
@@ -99,12 +126,21 @@ async function initializeGraphics() {
       dataContainer.addChild(shape);
     };
 
-    addPoint(0.2 - 0.2 * 0.002 * floats[0], 1, "#FF0000");
-    addPoint(0.4 - 0.2 * 0.002 * floats[1], 1, "#00FF00");
-    addPoint(0.6 - 0.2 * 0.002 * floats[2], 1, "#0000FF");
-    addPoint(0.8 - 0.2 * 0.002 * floats[3], 1, "#FFFFFF");
-    const sum = floats[1] + floats[2];
-    addPoint(1 - 0.2 * 0.002 * sum / 2, 1, "#000000");
+    let colors = [
+      0xff0000,
+      0x00ff00,
+      0x0000ff,
+      0xff00ff,
+      0x00ffff
+    ];
+
+    for (let i = 0; i < count; i++) {
+      let base = 1 - i * slice_size;
+      let scale = 1 / 500;
+      addPoint(base - slice_size * scale * floats[5 * i], 1 + floats[5 * i + 1] * 2, colors[i % colors.length]);
+      addPoint(base - slice_size * scale * (floats[5 * i + 2] + 0.0 * floats[5 * i + 4]), 0.5, 0xffffff);
+      addPoint(base - slice_size * scale * floats[5 * i + 3], 0.5, 0x000000);
+    }
   });
 }
 

@@ -6,7 +6,7 @@ use clap::Parser;
 mod analysis;
 mod audio;
 mod averages;
-mod beat_analysis;
+mod beat_detection;
 mod cell;
 mod dft;
 mod error;
@@ -167,7 +167,7 @@ impl Visualizer {
 
         let mut push_constant_values = std::collections::HashMap::new();
 
-        let is_beat = analysis.beat_analysis.is_beat;
+        let is_beat = analysis.beat_detectors[0].is_beat;
         push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
         let now = analysis.epoch.elapsed().as_secs_f32();
         push_constant_values.insert("now".to_owned(), F32(now));

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     audio::{high_pass::HighPass, low_pass::LowPass, Audio},
-    beat_analysis::BeatAnalysis,
+    beat_detection::BeatDetection,
     dft::Dft,
     server::FrameSender,
     utils::dft_index_of_frequency,
@@ -35,7 +35,9 @@ pub struct Analysis {
     pub buf_size: usize,
 
     pub frequency_band_border_indices: [usize; 8],
-    pub beat_analysis: BeatAnalysis,
+
+    pub beat_dft_range: (usize, usize),
+    pub beat_detectors: Vec<BeatDetection>,
 
     broadcast: Option<Arc<FrameSender>>,
 }
@@ -54,6 +56,9 @@ impl Analysis {
         let frequency_band_border_indices = frequency_band_borders
             .map(|frequency| dft_index_of_frequency(frequency, audio.sample_rate(), dft_size));
 
+        let beat_dft_lower = dft_index_of_frequency(35, audio.sample_rate(), dft_size);
+        let beat_dft_upper = dft_index_of_frequency(125, audio.sample_rate(), dft_size);
+
         Self {
             epoch: Instant::now(),
             audio,
@@ -69,7 +74,10 @@ impl Analysis {
             write_index: 0,
             buf_size: 0,
             frequency_band_border_indices,
-            beat_analysis: BeatAnalysis::new(),
+            beat_dft_range: (beat_dft_lower, beat_dft_upper),
+            beat_detectors: Vec::from_iter(
+                (beat_dft_lower..=beat_dft_upper).map(|_| BeatDetection::new()),
+            ),
             broadcast,
         }
     }
@@ -155,20 +163,26 @@ impl Analysis {
             .write_to_buffer(self.high_pass_dft.get_input_vec());
         self.high_pass_dft.run_transform();
 
-        let beat_dft = &self.signal_dft;
-        let beat_dft_lower = dft_index_of_frequency(35, self.audio.sample_rate(), beat_dft.size());
-        let beat_dft_upper = dft_index_of_frequency(125, self.audio.sample_rate(), beat_dft.size());
-        let beat_dft_sum_size = beat_dft_upper - beat_dft_lower;
-        let bass_frequencies = &beat_dft.simple[beat_dft_lower..beat_dft_upper];
+        let beat_dft = &self.low_pass_dft;
+        let bass_frequencies = &beat_dft.simple[self.beat_dft_range.0..=self.beat_dft_range.1];
+
+        // let mut data = Vec::new();
+        // for (&fq, detector) in bass_frequencies.iter().zip(self.beat_detectors.iter_mut()) {
+        //     detector.sample(fq);
+        //     data.push(fq);
+        //     data.push(if detector.is_beat { 1.0 } else { 0.0 });
+        //     data.push(detector.short_avg.avg);
+        //     data.push(detector.long_avg.avg);
+        //     data.push(detector.short_avg.sd);
+        // }
 
         if let Some(broadcast) = &self.broadcast {
+            // broadcast
+            //     .send(data)
+            //     .expect("Failed to broadcast frame bass frequencies");
             broadcast
                 .send(bass_frequencies.to_owned())
                 .expect("Failed to broadcast frame bass frequencies");
         }
-
-        let beat_dft_sum = bass_frequencies.iter().fold(0f32, |a, b| a + b);
-        self.beat_analysis
-            .sample(beat_dft_sum / beat_dft_sum_size as f32);
     }
 }
