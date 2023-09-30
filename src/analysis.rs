@@ -133,24 +133,43 @@ impl Analysis {
     pub fn tick(&mut self) {
         let (read_index, write_index, buf_size) = self.compute_data_indices();
 
+        let mut square_sum = 0.0;
+        let mut low_square_sum = 0.0;
         if write_index < read_index {
             for index in read_index..buf_size {
                 let x = self.audio.signal.data[index];
                 self.low_pass.sample(x);
                 self.high_pass.sample(x);
+                square_sum += x.abs().powf(2.0);
+                low_square_sum += self.low_pass.last().abs().powf(2.0);
             }
             for index in 0..write_index {
                 let x = self.audio.signal.data[index];
                 self.low_pass.sample(x);
                 self.high_pass.sample(x);
+                square_sum += x.abs().powf(2.0);
+                low_square_sum += self.low_pass.last().abs().powf(2.0);
             }
+
+            let len = ((buf_size - read_index) + write_index) as f32;
+            square_sum /= len;
+            low_square_sum /= len;
         } else {
             for index in read_index..write_index {
                 let x = self.audio.signal.data[index];
                 self.low_pass.sample(x);
                 self.high_pass.sample(x);
+                square_sum += x.abs().powf(2.0);
+                low_square_sum += self.low_pass.last().abs().powf(2.0);
             }
+
+            let len = (write_index - read_index) as f32;
+            square_sum /= len;
+            low_square_sum /= len;
         }
+
+        let signal_rmse = square_sum;
+        let low_rmse = low_square_sum;
 
         self.audio
             .signal
@@ -165,6 +184,8 @@ impl Analysis {
 
         let beat_dft = &self.low_pass_dft;
         let bass_frequencies = &beat_dft.simple[self.beat_dft_range.0..=self.beat_dft_range.1];
+
+        let frequency_sum = bass_frequencies.iter().fold(0.0, |a, b| a + b);
 
         // let mut data = Vec::new();
         // for (&fq, detector) in bass_frequencies.iter().zip(self.beat_detectors.iter_mut()) {
@@ -181,7 +202,7 @@ impl Analysis {
             //     .send(data)
             //     .expect("Failed to broadcast frame bass frequencies");
             broadcast
-                .send(bass_frequencies.to_owned())
+                .send(vec![frequency_sum, signal_rmse, low_rmse])
                 .expect("Failed to broadcast frame bass frequencies");
         }
     }
