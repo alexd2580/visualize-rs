@@ -7,12 +7,18 @@ function connectToBackend(onmessage) {
 
   const ws = new WebSocket("ws://localhost:9090");
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => ws.send("Hello, client here!");
+  ws.onopen = () => {
+    document.getElementById("overlay").classList.add("hide")
+    document.getElementById("canvas").classList.remove("blur")
+    ws.send("Hello, client here!");
+
+  };
   ws.onmessage = onmessage;
   ws.onclose = () => {
-    // alert("Connection is closed...");
+    document.getElementById("canvas").classList.add("blur")
+    document.getElementById("overlay").classList.remove("hide")
     setTimeout(() => connectToBackend(onmessage), 3000);
-  }
+  };
 }
 
 function createCircleTexture(app) {
@@ -76,33 +82,83 @@ class Avg {
 class BeatDetector {
   constructor() {
     this.short_avg = new Avg(60 / 5);
-    this.long_avg = new Avg(5 * 60);
+    this.medium_avg = new Avg(1 * 60);
+    this.long_avg = new Avg(60 * 60);
 
-    this.noise_threshold_factor = 1;
-    this.beat_sigma_threshold_factor = 2.5;
+    this.last_value = 0;
+
+    this.noise_threshold_factor = 0.5;
+    this.beat_threshold_factor = 1.1;
+
+    this.last_beat_samples_ago = 0;
+    this.last_beat_samples_threshold = 15;
+
+    this.is_beat = false;
+    this.was_high = false;
+
+    this.spb = 60;
+    this.spb_offset_avg = new Avg(15);
   }
 
   sample(x) {
+    this.was_high = this.is_high;
+
     this.short_avg.sample(x);
+    this.medium_avg.sample(x);
     this.long_avg.sample(x);
+    this.last_value = x;
+
+    this.last_beat_samples_ago++;
+    this.is_beat = false;
+
+    if (!this.was_high && this.is_high && this.last_beat_samples_ago > this.last_beat_samples_threshold) {
+      this.update_bpm();
+      this.last_beat_samples_ago = 0;
+      this.is_beat = true;
+    }
+  }
+
+  update_bpm() {
+    const num_of_cycles = Math.round(this.last_beat_samples_ago / this.spb);
+    const last_cycle_duration = this.last_beat_samples_ago - Math.max(0, (num_of_cycles - 1)) * this.spb;
+    this.spb_offset_avg.sample(Math.abs(this.spb - last_cycle_duration));
+    this.spb = 0.95 * this.spb + 0.05 * last_cycle_duration;
+  }
+
+  get bpm_confidence() {
+    return 1 / Math.max(1, this.spb_offset_avg.avg);
+  }
+
+  get beat_confidence() {
+    const num_of_cycles = Math.round(this.last_beat_samples_ago / this.spb);
+    const distance_to_cycle = Math.abs(this.last_beat_samples_ago - num_of_cycles * this.spb);
+    return this.bpm_confidence * (1 / Math.max(1, distance_to_cycle));
+  }
+
+  get is_high() {
+    return this.is_not_noise && this.is_eligible && this.is_outlier;
   }
 
   get is_not_noise() {
-    const noise_threshold = this.long_avg.avg * this.noise_threshold_factor;
-    return this.short_avg.avg > noise_threshold;
+    return this.last_value > this.long_avg.avg * this.noise_threshold_factor;
+  }
+
+  get is_eligible() {
+    return this.short_avg.avg > this.medium_avg.avg * this.beat_threshold_factor;
   }
 
   get is_outlier() {
-    const beat_margin = this.beat_sigma_threshold_factor * this.short_avg.sd;
-    const beat_threshold = this.short_avg.avg + beat_margin;
-    return this.short_avg.data[this.short_avg.data.length - 1] > beat_threshold;
+    return this.last_value > this.short_avg.avg;
+  }
+
+  get expecting_beat() {
+    return this.last_beat_samples_ago == Math.trunc(this.spb);
   }
 }
 
 async function initializeGraphics() {
   const app = new PIXI.Application({ background: '#1099bb', resizeTo: window });
-
-  document.body.appendChild(app.view);
+  document.body.appendChild(app.view).id = "canvas";
 
   const circleTexture = createCircleTexture(app);
 
@@ -151,7 +207,7 @@ async function initializeGraphics() {
       for (let i = 0; i < count; i++) {
         let graphics = new PIXI.Graphics();
         graphics.position.set(0, i * slice_size * app.screen.height);
-        graphics.lineStyle(1, 0xffffff);
+        graphics.lineStyle(5, 0x000000);
         graphics.lineTo(app.screen.width, 0);
         gridContainer.addChild(graphics);
       }
@@ -171,9 +227,12 @@ async function initializeGraphics() {
     let colors = [
       0xff0000,
       0x00ff00,
-      0xff00ff,
       0x0000ff,
-      0x00ffff
+      0xffff00,
+      0xff00ff,
+      0x00ffff,
+      0x000000,
+      0xffffff
     ];
 
     let scale = [1 / 1000, 1, 1];
@@ -183,11 +242,17 @@ async function initializeGraphics() {
       const d = detectors[i];
       d.sample(v);
 
-      let s = (d.is_not_noise && d.is_outlier) ? 2.0 : 0.5;
-
       let base = 1 - i * slice_size;
-      addPoint(base - slice_size * scale[i] * v, s, colors[i]);
-      addPoint(base - slice_size * scale[i] * d.short_avg.avg, 0.5, colors[i + 1]);
+      if (d.is_beat) {
+        addPoint(base - slice_size * scale[i] * v, 2.0, colors[i]);
+      }
+      addPoint(base - slice_size * scale[i] * d.short_avg.avg, 0.7, colors[i + 1]);
+      addPoint(base - slice_size * scale[i] * d.beat_threshold_factor * d.medium_avg.avg, 0.7, colors[i + 2]);
+      addPoint(base - slice_size * scale[i] * d.noise_threshold_factor * d.long_avg.avg, 0.7, colors[i + 3]);
+
+      // addPoint(base - slice_size * (d.last_beat_samples_ago / d.spb % 1), 0.5, colors[i + 4]);
+      addPoint(base - slice_size * d.bpm_confidence, 0.5, colors[i + 4]);
+      addPoint(base - slice_size * d.beat_confidence, 0.5, colors[i + 5]);
     }
   });
 }
