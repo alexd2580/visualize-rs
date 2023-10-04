@@ -87,8 +87,8 @@ class BeatDetector {
 
     this.last_value = 0;
 
-    this.noise_threshold_factor = 0.5;
-    this.beat_threshold_factor = 1.1;
+    this._noise_threshold_factor = 0.5;
+    this._beat_threshold_factor = 1.1;
 
     this.last_beat_samples_ago = 0;
     this.last_beat_samples_threshold = 15;
@@ -98,6 +98,14 @@ class BeatDetector {
 
     this.spb = 60;
     this.spb_offset_avg = new Avg(15);
+  }
+
+  get noise_threshold_factor() {
+    return this._noise_threshold_factor - 0.2 * this.bpm_confidence;
+  }
+
+  get beat_threshold_factor() {
+    return this._beat_threshold_factor - 0.2 * this.bpm_confidence;
   }
 
   sample(x) {
@@ -147,8 +155,12 @@ class BeatDetector {
     return this.short_avg.avg > this.medium_avg.avg * this.beat_threshold_factor;
   }
 
+  get extraordinarity() {
+    return this.last_value / this.short_avg.avg;
+  }
+
   get is_outlier() {
-    return this.last_value > this.short_avg.avg;
+    return this.extraordinarity >= 1;
   }
 
   get expecting_beat() {
@@ -244,7 +256,7 @@ async function initializeGraphics() {
 
       let base = 1 - i * slice_size;
       if (d.is_beat) {
-        addPoint(base - slice_size * scale[i] * v, 2.0, colors[i]);
+        addPoint(base - slice_size * scale[i] * Math.min(2, d.extraordinarity) / 2, 2.0, colors[i]);
       }
       addPoint(base - slice_size * scale[i] * d.short_avg.avg, 0.7, colors[i + 1]);
       addPoint(base - slice_size * scale[i] * d.beat_threshold_factor * d.medium_avg.avg, 0.7, colors[i + 2]);
