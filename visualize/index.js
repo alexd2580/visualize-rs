@@ -78,9 +78,58 @@ class Avg {
   }
 }
 
+class BPMDetector {
+  constructor() {
+    this.beat_indices = [];
+    this.cutoff_offset = 60 * 20; // 20 seconds.
+
+    this.min_beats = 5;
+
+    this.offset = 0;
+    this.spb = 60;
+    this.spb_offset_avg = new Avg(15);
+  }
+
+  add_beat(index) {
+    this.beat_indices.push(index);
+    while(this.beat_indices.length && this.beat_indices[0] < index - this.cutoff_offset) {
+      this.beat_indices.shift();
+    }
+  }
+
+  update_bpm(index) {
+    this.add_beat(index);
+    if (this.beat_indices.length < this.min_beats) {
+      return;
+    }
+
+      let mean =
+    for(let i=1; i< this.beat_indices.length; i++) {
+      mean +=
+    }
+
+
+
+
+
+
+
+    const num_of_cycles = Math.round(this.last_beat_samples_ago / this.spb);
+    const last_cycle_duration = this.last_beat_samples_ago - Math.max(0, (num_of_cycles - 1)) * this.spb;
+    this.spb_offset_avg.sample(Math.abs(this.spb - last_cycle_duration));
+    this.spb = 0.95 * this.spb + 0.05 * last_cycle_duration;
+  }
+
+  get bpm_confidence() {
+    return 1 / Math.max(1, this.spb_offset_avg.avg);
+  }
+}
+
 
 class BeatDetector {
   constructor() {
+    this.index = 0;
+
     this.short_avg = new Avg(60 / 5);
     this.medium_avg = new Avg(1 * 60);
     this.long_avg = new Avg(60 * 60);
@@ -96,8 +145,7 @@ class BeatDetector {
     this.is_beat = false;
     this.was_high = false;
 
-    this.spb = 60;
-    this.spb_offset_avg = new Avg(15);
+    this.bpm = new BPMDetector();
   }
 
   get noise_threshold_factor() {
@@ -120,27 +168,18 @@ class BeatDetector {
     this.is_beat = false;
 
     if (!this.was_high && this.is_high && this.last_beat_samples_ago > this.last_beat_samples_threshold) {
-      this.update_bpm();
+      this.update_bpm(this.index);
       this.last_beat_samples_ago = 0;
       this.is_beat = true;
     }
-  }
 
-  update_bpm() {
-    const num_of_cycles = Math.round(this.last_beat_samples_ago / this.spb);
-    const last_cycle_duration = this.last_beat_samples_ago - Math.max(0, (num_of_cycles - 1)) * this.spb;
-    this.spb_offset_avg.sample(Math.abs(this.spb - last_cycle_duration));
-    this.spb = 0.95 * this.spb + 0.05 * last_cycle_duration;
-  }
-
-  get bpm_confidence() {
-    return 1 / Math.max(1, this.spb_offset_avg.avg);
+    this.index ++;
   }
 
   get beat_confidence() {
     const num_of_cycles = Math.round(this.last_beat_samples_ago / this.spb);
     const distance_to_cycle = Math.abs(this.last_beat_samples_ago - num_of_cycles * this.spb);
-    return this.bpm_confidence * (1 / Math.max(1, distance_to_cycle));
+    return this.bpm.bpm_confidence * (1 / Math.max(1, distance_to_cycle));
   }
 
   get is_high() {
@@ -161,10 +200,6 @@ class BeatDetector {
 
   get is_outlier() {
     return this.extraordinarity >= 1;
-  }
-
-  get expecting_beat() {
-    return this.last_beat_samples_ago == Math.trunc(this.spb);
   }
 }
 
