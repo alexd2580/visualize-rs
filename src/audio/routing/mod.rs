@@ -5,7 +5,7 @@ use libpulse_binding::{
     proplist::{properties, Proplist},
 };
 
-use crate::{error::Error, cell::Cell};
+use crate::{cell::Cell, error::Error};
 
 use self::types::{ApplicationInfo, ServerInfo};
 

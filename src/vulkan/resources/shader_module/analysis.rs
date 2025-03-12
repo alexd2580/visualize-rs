@@ -143,7 +143,8 @@ fn match_init_declarator_list(
 
     let Some(syntax::TypeQualifier {
         qualifiers: syntax::NonEmpty(ref type_qualifier_specs),
-    }) = type_qualifier else {
+    }) = type_qualifier
+    else {
         let msg = format!("Unexpected type qualifier: {type_qualifier:?}");
         return Err(Error::Local(msg));
     };

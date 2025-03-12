@@ -103,10 +103,10 @@ class BPMDetector {
       return;
     }
 
-      let mean =
-    for(let i=1; i< this.beat_indices.length; i++) {
-      mean +=
-    }
+    //   let mean =
+    // for(let i=1; i< this.beat_indices.length; i++) {
+    //   mean +=
+    // }
 
 
 
