@@ -4,31 +4,36 @@ use core::ops::Not;
 
 use log::debug;
 
-use ash::vk;
+use ash::{extensions::khr::Surface as SurfaceLoader, vk};
 
 use crate::error::Error;
 
 use super::{instance::Instance, surface::Surface};
 
-fn choose_compute_queue_family(
-    _physical_device: vk::PhysicalDevice,
+fn supports_compute_and_surface(
+    physical_device: vk::PhysicalDevice,
+    surface_loader: &SurfaceLoader,
+    surface: &Surface,
     index: u32,
     queue_family_properties: &vk::QueueFamilyProperties,
-) -> Option<u32> {
+) -> bool {
     let queue_flags = queue_family_properties.queue_flags;
-    let supports_compute = queue_flags.contains(vk::QueueFlags::COMPUTE);
-    let does_not_support_graphics = queue_flags.not().contains(vk::QueueFlags::GRAPHICS);
+    let supports_compute = queue_flags.contains(vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS);
+    // let does_not_support_graphics = queue_flags.not().contains(vk::QueueFlags::GRAPHICS);
 
-    if supports_compute && does_not_support_graphics {
-        Some(index)
-    } else {
-        None
+    let supports_surface = unsafe {
+        surface_loader.get_physical_device_surface_support(physical_device, index, **surface)
     }
+    .unwrap();
+    dbg!(&supports_surface);
+
+    supports_compute && supports_surface // && does_not_support_graphics
 }
 
 unsafe fn choose_physical_device_queue(
     instance: &Instance,
-    _surface: &Surface,
+    surface_loader: &SurfaceLoader,
+    surface: &Surface,
     physical_device: vk::PhysicalDevice,
 ) -> Option<(vk::PhysicalDevice, u32)> {
     let queue_family_properties =
@@ -39,11 +44,15 @@ unsafe fn choose_physical_device_queue(
             .iter()
             .enumerate()
             .find_map(|(index, queue_family_props)| {
-                choose_compute_queue_family(
+                let index = u32::try_from(index).unwrap();
+                supports_compute_and_surface(
                     physical_device,
-                    u32::try_from(index).unwrap(),
+                    surface_loader,
+                    surface,
+                    index,
                     queue_family_props,
                 )
+                .then_some(index)
             })?;
 
     Some((physical_device, compute_queue_family_index))
@@ -87,13 +96,17 @@ fn choose_image_memory_type(index: u32, memory_type: vk::MemoryType) -> Option<u
 }
 
 impl PhysicalDevice {
-    pub unsafe fn new(instance: &Instance, surface: &Surface) -> Result<Rc<PhysicalDevice>, Error> {
+    pub unsafe fn new(
+        instance: &Instance,
+        surface_loader: &SurfaceLoader,
+        surface: &Surface,
+    ) -> Result<Rc<PhysicalDevice>, Error> {
         debug!("Choosing physical device");
 
         let physical_devices = instance.enumerate_physical_devices()?;
         let (physical_device, compute_queue_family_index) = physical_devices
             .into_iter()
-            .find_map(|p| choose_physical_device_queue(instance, surface, p))
+            .find_map(|p| choose_physical_device_queue(instance, surface_loader, surface, p))
             .ok_or_else(|| Error::Local("Couldn't find suitable device".to_owned()))?;
 
         // For reference see: https://github.com/Traverse-Research/gpu-allocator/blob/main/src/vulkan/mod.rs#L742

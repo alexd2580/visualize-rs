@@ -23,7 +23,7 @@ impl Deref for Surface {
 
 impl Surface {
     pub fn new(
-        window: &Window,
+        window: &Rc<Window>,
         entry: &ash::Entry,
         instance: &Instance,
         surface_loader: &SurfaceLoader,
@@ -32,6 +32,10 @@ impl Surface {
         let surface_loader = surface_loader.clone();
 
         let surface = window.create_surface(entry, instance)?;
+        if surface == vk::SurfaceKHR::null() {
+            panic!("RIP");
+        }
+
         Ok(Rc::new(Surface {
             surface_loader,
             surface,

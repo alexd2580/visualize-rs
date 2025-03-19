@@ -11,8 +11,6 @@ use crate::{
 
 use self::{routing::Routing, stereo::Stereo};
 
-pub mod high_pass;
-pub mod low_pass;
 mod routing;
 mod stereo;
 mod virtual_sink;
@@ -288,7 +286,7 @@ impl Drop for DelayedOutput {
 
 pub struct Audio {
     cpal: Cpal,
-    ring_buffer: ThreadShared<stereo::Stereo>,
+    stereo: ThreadShared<stereo::Stereo>,
     #[allow(dead_code)]
     input_stream: cpal::Stream,
     #[allow(dead_code)]
@@ -299,7 +297,7 @@ impl Deref for Audio {
     type Target = stereo::Stereo;
 
     fn deref(&self) -> &Self::Target {
-        self.ring_buffer.read()
+        self.stereo.read()
     }
 }
 
@@ -309,7 +307,7 @@ impl Audio {
     }
 
     pub fn buffer_size(&self) -> usize {
-        self.ring_buffer.read().left.size
+        self.stereo.read().left.size
     }
 
     fn init_input_stream(
@@ -340,7 +338,7 @@ impl Audio {
 
         Ok(Audio {
             cpal,
-            ring_buffer,
+            stereo: ring_buffer,
             input_stream,
             delayed_output,
         })

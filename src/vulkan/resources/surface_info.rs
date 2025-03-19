@@ -24,6 +24,17 @@ impl SurfaceInfo {
     ) -> Result<Self, Error> {
         debug!("Collecting surface info");
 
+        dbg!(&**physical_device, &**surface, physical_device.compute_queue_family_index);
+        let present_support = surface_loader.get_physical_device_surface_support(
+            **physical_device,
+            physical_device.compute_queue_family_index,
+            **surface,
+        )?;
+        dbg!(&present_support);
+        if !present_support {
+            dbg!("RIP");
+        }
+
         let surface_formats =
             surface_loader.get_physical_device_surface_formats(**physical_device, **surface)?;
         let surface_capabilities = surface_loader
@@ -75,6 +86,7 @@ impl SurfaceInfo {
                 height: 720,
             };
         }
+        debug!("Collecting surface info done");
 
         Ok(SurfaceInfo {
             surface_format,

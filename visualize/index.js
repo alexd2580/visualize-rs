@@ -92,7 +92,7 @@ class BPMDetector {
 
   add_beat(index) {
     this.beat_indices.push(index);
-    while(this.beat_indices.length && this.beat_indices[0] < index - this.cutoff_offset) {
+    while (this.beat_indices.length && this.beat_indices[0] < index - this.cutoff_offset) {
       this.beat_indices.shift();
     }
   }
@@ -173,7 +173,7 @@ class BeatDetector {
       this.is_beat = true;
     }
 
-    this.index ++;
+    this.index++;
   }
 
   get beat_confidence() {
@@ -241,7 +241,8 @@ async function initializeGraphics() {
 
     const floats = new Float32Array(message.data);
 
-    let count = floats.length;
+    let values_per_series = 4;
+    let count = floats.length / values_per_series;
     let slice_size = 1 / count;
 
     if (count != numGraphs) {
@@ -279,27 +280,44 @@ async function initializeGraphics() {
       0xff00ff,
       0x00ffff,
       0x000000,
-      0xffffff
+      0xffffff,
+      0x799999
     ];
 
-    let scale = [1 / 1000, 1, 1];
+    let max = 0;
+    let max_i = 0;
+    for (let i = 0; i < count; i++) {
+      if (floats[values_per_series * i + 2] > max) {
+        max_i = i;
+        max = floats[values_per_series * i + 2]
+      }
+    }
 
     for (let i = 0; i < count; i++) {
-      const v = floats[i];
-      const d = detectors[i];
-      d.sample(v);
-
+      const v = floats[values_per_series * i];
+      const avg = floats[values_per_series * i + 1];
+      const sd = floats[values_per_series * i + 2];
+      const is_beat = floats[values_per_series * i + 3] > 0.5 && i == max_i;
+      // const d = detectors[i];
+      // d.sample(v);
+      //
       let base = 1 - i * slice_size;
-      if (d.is_beat) {
-        addPoint(base - slice_size * scale[i] * Math.min(2, d.extraordinarity) / 2, 2.0, colors[i]);
-      }
-      addPoint(base - slice_size * scale[i] * d.short_avg.avg, 0.7, colors[i + 1]);
-      addPoint(base - slice_size * scale[i] * d.beat_threshold_factor * d.medium_avg.avg, 0.7, colors[i + 2]);
-      addPoint(base - slice_size * scale[i] * d.noise_threshold_factor * d.long_avg.avg, 0.7, colors[i + 3]);
+      // if (d.is_beat) {
+      //   addPoint(base - slice_size * scale[i] * Math.min(2, d.extraordinarity) / 2, 2.0, colors[i]);
+      // }
+      addPoint(base - slice_size * v, is_beat ? 1.0 : 0.5, colors[0]);
+      addPoint(base - slice_size * avg, 0.7, colors[1]);
+      addPoint(base - slice_size * sd, 0.7, colors[2]);
+      // console.log(v)
+      // addPoint(base - slice_size * scale[i], 0.7, colors[i + 2]);
+      // addPoint(base - slice_size * scale[i], 0.7, colors[i + 3]);
+      // addPoint(base - slice_size * scale[i] * d.short_avg.avg, 0.7, colors[i + 1]);
+      // addPoint(base - slice_size * scale[i] * d.beat_threshold_factor * d.medium_avg.avg, 0.7, colors[i + 2]);
+      // addPoint(base - slice_size * scale[i] * d.noise_threshold_factor * d.long_avg.avg, 0.7, colors[i + 3]);
 
       // addPoint(base - slice_size * (d.last_beat_samples_ago / d.spb % 1), 0.5, colors[i + 4]);
-      addPoint(base - slice_size * d.bpm_confidence, 0.5, colors[i + 4]);
-      addPoint(base - slice_size * d.beat_confidence, 0.5, colors[i + 5]);
+      // addPoint(base - slice_size * d.bpm_confidence, 0.5, colors[i + 4]);
+      // addPoint(base - slice_size * d.beat_confidence, 0.5, colors[i + 5]);
     }
   });
 }

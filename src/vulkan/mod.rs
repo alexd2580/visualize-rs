@@ -160,24 +160,26 @@ pub struct Vulkan {
     // Core.
     _instance: Rc<Instance>,
     _entry: ash::Entry,
+    window: Rc<Window>,
 }
 
 impl Vulkan {
     pub fn new(
-        window: &Window,
+        window: &Rc<Window>,
         compute_shader_paths: &[impl Deref<Target = Path>],
         vsync: bool,
     ) -> Result<Self, Error> {
         debug!("Initializing video system");
         unsafe {
             // Core.
+            let window = window.clone();
             let entry = ash::Entry::linked();
-            let instance = Instance::new(window, &entry)?;
+            let instance = Instance::new(&window, &entry)?;
 
             // Device.
             let surface_loader = SurfaceLoader::new(&entry, &instance);
-            let surface = Surface::new(window, &entry, &instance, &surface_loader)?;
-            let physical_device = PhysicalDevice::new(&instance, &surface)?;
+            let surface = Surface::new(&window, &entry, &instance, &surface_loader)?;
+            let physical_device = PhysicalDevice::new(&instance, &surface_loader, &surface)?;
             let device = Device::new(&instance, &physical_device)?;
             let compute_queue =
                 device.get_device_queue(physical_device.compute_queue_family_index, 0);
@@ -222,6 +224,7 @@ impl Vulkan {
             let compute_complete_semaphore = Semaphore::new(&device)?;
 
             let mut vulkan = Vulkan {
+                window,
                 _entry: entry,
                 _instance: instance,
                 surface_loader,
@@ -343,6 +346,16 @@ impl Vulkan {
         // then frees/drops the old ones. In case we are at memory limits this might leat to GPU
         // OOM errors. Alternative solutions: wrap all fields in `Option` or separate between free
         // and `drop`.
+
+        let present_support = self.surface_loader.get_physical_device_surface_support(
+            **self.physical_device,
+            self.physical_device.compute_queue_family_index,
+            **self.surface,
+        )?;
+        if !present_support {
+            dbg!("RIP, attempting recreation of surface...");
+            self.surface = Surface::new(&self.window, &self._entry, &self._instance, &self.surface_loader)?;
+        }
 
         self.surface_info = SurfaceInfo::new(
             &self.physical_device,
@@ -643,6 +656,7 @@ impl Vulkan {
         self.num_frames += 1;
 
         if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) = present_result {
+            info!("Received rendering error, likely due to mismatched resolutions");
             self.reinitialize_swapchain()?;
             Ok(Some(Event::Resized))
         } else {

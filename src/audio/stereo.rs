@@ -1,10 +1,8 @@
-use crate::{averages::MaxDecay, ring_buffer::RingBuffer};
+use crate::ring_buffer::RingBuffer;
 
 pub struct Stereo {
     pub left: RingBuffer<f32>,
     pub right: RingBuffer<f32>,
-
-    max: MaxDecay,
     pub signal: RingBuffer<f32>,
 }
 
@@ -13,8 +11,9 @@ impl Stereo {
         Stereo {
             left: RingBuffer::new(size),
             right: RingBuffer::new(size),
-            max: MaxDecay::new(0.99999, 0.001),
             signal: RingBuffer::new(size),
+            // band_pass_l: BiquadBandPass::new(44100, 90, 10.0),
+            // band_pass_r: BiquadBandPass::new(44100, 90, 10.0),
         }
     }
 
@@ -30,16 +29,12 @@ impl Stereo {
         for (index, channels) in samples.chunks(num_channels).take(space_at_end).enumerate() {
             left[self.left.write_index + index] = channels[0];
             right[self.left.write_index + index] = channels[1];
-            let mono = channels[0];
-            self.max.sample(mono);
-            signal[self.left.write_index + index] = mono / self.max.max;
+            signal[self.left.write_index + index] = channels[0]
         }
         for (index, channels) in samples.chunks(num_channels).skip(space_at_end).enumerate() {
             left[index] = channels[0];
             right[index] = channels[1];
-            let mono = channels[0];
-            self.max.sample(mono);
-            signal[index] = mono / self.max.max;
+            signal[index] = channels[0];
         }
 
         let write_index = (self.left.write_index + num_samples) % self.left.size;

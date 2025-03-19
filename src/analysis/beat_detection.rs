@@ -1,11 +1,11 @@
-use crate::averages::{AlphaAvg, History, WindowedAvg};
+use crate::filters::{
+    alpha_avg::AlphaAvg, filter::Filter, statistical_summary::StatisticalSummary,
+};
 
 pub struct BeatDetection {
-    pub history: History,
-
     // Averages.
     pub long_avg: AlphaAvg,
-    pub short_avg: WindowedAvg,
+    pub short_stats: StatisticalSummary,
 
     // Beat detection.
     pub noise_threshold_factor: f32,
@@ -28,14 +28,12 @@ impl BeatDetection {
         // TODO make dynamic using on-the-go fps detection and reinitialization.
         let frame_rate = 60;
 
-        let history_size = 8 * frame_rate;
-        let short_avg_size = frame_rate / 5;
+        let short_stat_size = frame_rate / 5;
 
         Self {
-            history: History::new(history_size),
             // Averages.
             long_avg: AlphaAvg::new(0.995),
-            short_avg: WindowedAvg::new(short_avg_size),
+            short_stats: StatisticalSummary::new(short_stat_size),
             // Beat detection.
             noise_threshold_factor: 1.0,
             beat_sigma_threshold_factor: 2.5,
@@ -46,18 +44,14 @@ impl BeatDetection {
 
     fn update_averages(&mut self, x: f32) {
         self.long_avg.sample(x);
-
-        let old_x = self.history.at_offset(0, self.short_avg.size);
-        self.short_avg.sample(*old_x, x);
-
-        self.history.push(x);
+        self.short_stats.sample(x);
     }
 
     fn decide_beat(&mut self, x: f32) {
         let noise_threshold = self.noise_threshold_factor * self.long_avg.avg;
-        let not_noise = self.short_avg.avg > noise_threshold;
-        let beat_margin = self.beat_sigma_threshold_factor * self.short_avg.sd;
-        let beat_threshold = self.short_avg.avg + beat_margin;
+        let not_noise = self.short_stats.avg > noise_threshold;
+        let beat_margin = self.beat_sigma_threshold_factor * self.short_stats.sd;
+        let beat_threshold = self.short_stats.avg + beat_margin;
         let loud_outlier = x > beat_threshold;
 
         let was_high = self.is_high;

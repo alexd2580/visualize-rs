@@ -5,13 +5,10 @@ use clap::Parser;
 
 mod analysis;
 mod audio;
-mod averages;
-mod beat_detection;
 mod cell;
-mod dft;
 mod error;
+mod filters;
 mod ring_buffer;
-mod server;
 mod thread_shared;
 mod timer;
 mod utils;
@@ -25,11 +22,11 @@ struct Visualizer {
     signal_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
     signal_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
-    low_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    low_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-
-    high_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
-    high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
+    // low_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
+    // low_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
+    //
+    // high_pass_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
+    // high_pass_dft_gpu: Rc<vulkan::multi_buffer::MultiBuffer>,
 
     // let dft_result_size = Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
     // history: History::new(history_size),
@@ -87,38 +84,41 @@ impl Visualizer {
         analysis: &analysis::Analysis,
     ) -> error::VResult<(winit::event_loop::EventLoop<()>, Visualizer)> {
         let (event_loop, window) = window::Window::new()?;
+        let window = Rc::new(window);
         let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths, !args.no_vsync)?;
 
-        let signal_gpu =
-            vulkan.new_multi_buffer("signal", analysis.audio.signal.serialized_size(), Some(1))?;
-        let low_pass_gpu =
-            vulkan.new_multi_buffer("low_pass", analysis.low_pass.serialized_size(), Some(1))?;
-        let high_pass_gpu =
-            vulkan.new_multi_buffer("high_pass", analysis.high_pass.serialized_size(), Some(1))?;
-
-        let signal_dft_gpu = vulkan.new_multi_buffer(
-            "signal_dft",
-            analysis.signal_dft.serialized_size(),
-            Some(1),
-        )?;
-        let low_pass_dft_gpu = vulkan.new_multi_buffer(
-            "low_pass_dft",
-            analysis.low_pass_dft.serialized_size(),
-            Some(1),
-        )?;
-        let high_pass_dft_gpu = vulkan.new_multi_buffer(
-            "high_pass_dft",
-            analysis.high_pass_dft.serialized_size(),
-            Some(1),
-        )?;
+        let signal_gpu = {
+            let size = analysis.audio.signal.serialized_size();
+            vulkan.new_multi_buffer("signal", size, Some(1))?
+        };
+        // let low_pass_gpu = {
+        //     let size = analysis.low_pass_buffer.serialized_size();
+        //     vulkan.new_multi_buffer("low_pass", size, Some(1))?
+        // };
+        // let high_pass_gpu = {
+        //     let size = analysis.high_pass_buffer.serialized_size();
+        //     vulkan.new_multi_buffer("high_pass", size, Some(1))?
+        // };
+        let signal_dft_gpu = {
+            let size = analysis.signal_dft.serialized_size();
+            vulkan.new_multi_buffer("signal_dft", size, Some(1))?
+        };
+        // let low_pass_dft_gpu = {
+        //     let size = analysis.low_pass_dft.serialized_size();
+        //     vulkan.new_multi_buffer("low_pass_dft", size, Some(1))?
+        // };
+        // let high_pass_dft_gpu = {
+        //     let size = analysis.high_pass_dft.serialized_size();
+        //     vulkan.new_multi_buffer("high_pass_dft", size, Some(1))?
+        // };
 
         let mut visualizer = Self {
             signal_gpu,
             signal_dft_gpu,
-            low_pass_gpu,
-            low_pass_dft_gpu,
-            high_pass_gpu,
-            high_pass_dft_gpu,
+            // low_pass_gpu,
+            // low_pass_dft_gpu,
+            // high_pass_gpu,
+            // high_pass_dft_gpu,
             images: Vec::new(),
             vulkan,
         };
@@ -139,7 +139,7 @@ impl Visualizer {
     }
 
     fn tick(&mut self, analysis: &analysis::Analysis) -> winit::event_loop::ControlFlow {
-        use vulkan::Value::{Bool, F32};
+        use vulkan::Value::F32;
 
         let read_index = analysis.read_index;
         let write_index = analysis.write_index;
@@ -148,27 +148,31 @@ impl Visualizer {
             .audio
             .signal
             .write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
-        analysis
-            .low_pass
-            .write_to_pointer(read_index, write_index, self.low_pass_gpu.mapped(0));
-        analysis
-            .high_pass
-            .write_to_pointer(read_index, write_index, self.high_pass_gpu.mapped(0));
-
-        analysis
-            .signal_dft
-            .write_to_pointer(self.signal_dft_gpu.mapped(0));
-        analysis
-            .low_pass_dft
-            .write_to_pointer(self.low_pass_dft_gpu.mapped(0));
-        analysis
-            .high_pass_dft
-            .write_to_pointer(self.high_pass_dft_gpu.mapped(0));
+        // analysis.low_pass_buffer.write_to_pointer(
+        //     read_index,
+        //     write_index,
+        //     self.low_pass_gpu.mapped(0),
+        // );
+        // analysis.high_pass_buffer.write_to_pointer(
+        //     read_index,
+        //     write_index,
+        //     self.high_pass_gpu.mapped(0),
+        // );
+        //
+        // analysis
+        //     .signal_dft
+        //     .write_to_pointer(self.signal_dft_gpu.mapped(0));
+        // analysis
+        //     .low_pass_dft
+        //     .write_to_pointer(self.low_pass_dft_gpu.mapped(0));
+        // analysis
+        //     .high_pass_dft
+        //     .write_to_pointer(self.high_pass_dft_gpu.mapped(0));
 
         let mut push_constant_values = std::collections::HashMap::new();
 
-        let is_beat = analysis.beat_detectors[0].is_beat;
-        push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
+        // let is_beat = analysis.beat_detectors[0].is_beat;
+        // push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
         let now = analysis.epoch.elapsed().as_secs_f32();
         push_constant_values.insert("now".to_owned(), F32(now));
 
@@ -230,7 +234,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
 
     // The websocket server launches a tokio runtime and listens to a channel.
     // No ticking apart from populating the channel is required.
-    let server = args.websocket.then(|| server::Server::start());
+    let server = args.websocket.then(|| analysis::server::Server::start());
 
     // Analysis should be ticked once per "frame".
     let analysis = {
@@ -239,23 +243,9 @@ fn run_main(args: &Args) -> error::VResult<()> {
         Cell::new(analysis)
     };
 
-    // The visualizer should also be ticked once per frame.
-    let visualizer = (!args.headless)
-        .then(|| Visualizer::new(&args, &analysis.as_ref()))
-        .transpose()?;
-
     // Choose the mainloop.
-    if let Some((mut event_loop, visualizer)) = visualizer {
-        // Use the visual winit-based mainloop.
-        let visualizer = Cell::new(visualizer);
-        event_loop.run_return(|event, &_, control_flow| {
-            *control_flow = window::handle_event(&event, &|| {
-                analysis.as_mut_ref().tick();
-                visualizer.as_mut_ref().tick(&analysis.as_ref())
-            });
-        });
-    } else {
-        // Use a custom headless one.
+    if args.headless {
+        // Use a custom headless mainloop.
         let run = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         ctrlc::set_handler({
             let run = run.clone();
@@ -268,6 +258,18 @@ fn run_main(args: &Args) -> error::VResult<()> {
             analysis.as_mut_ref().tick();
             std::thread::sleep(time::Duration::from_millis(16));
         }
+    } else {
+        // The visualizer should be ticked once per frame.
+        let (mut event_loop, visualizer) = Visualizer::new(&args, &analysis.as_ref())?;
+        let visualizer = Cell::new(visualizer);
+
+        // Use the visual winit-based mainloop.
+        event_loop.run_return(|event, &_, control_flow| {
+            *control_flow = window::handle_event(&event, &|| {
+                analysis.as_mut_ref().tick();
+                visualizer.as_mut_ref().tick(&analysis.as_ref())
+            });
+        });
     }
 
     Ok(())
