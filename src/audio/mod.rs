@@ -323,11 +323,11 @@ impl Audio {
         cpal.run_input_stream(device, read)
     }
 
-    pub fn new(seconds: u32, delayed_echo: bool) -> VResult<Self> {
+    pub fn new(seconds: usize, delayed_echo: bool) -> VResult<Self> {
         let cpal = Cpal::new();
 
         // TODO todo what? unwrap? sample rate?
-        let buffer_size = usize::try_from(seconds).unwrap() * cpal.sample_rate;
+        let buffer_size = seconds * cpal.sample_rate;
         let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
 
         let read_device = cpal.default_input_device()?;

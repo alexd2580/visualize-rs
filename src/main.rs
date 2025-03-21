@@ -15,6 +15,7 @@ mod utils;
 mod vulkan;
 mod window;
 
+use ring_buffer::RingBuffer;
 // Required to use run_return on event loop.
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -81,6 +82,7 @@ impl Visualizer {
 
     fn new(
         args: &Args,
+        signal: &RingBuffer<f32>,
         analysis: &analysis::Analysis,
     ) -> error::VResult<(winit::event_loop::EventLoop<()>, Visualizer)> {
         let (event_loop, window) = window::Window::new()?;
@@ -88,7 +90,7 @@ impl Visualizer {
         let mut vulkan = vulkan::Vulkan::new(&window, &args.shader_paths, !args.no_vsync)?;
 
         let signal_gpu = {
-            let size = analysis.audio.signal.serialized_size();
+            let size = signal.serialized_size();
             vulkan.new_multi_buffer("signal", size, Some(1))?
         };
         // let low_pass_gpu = {
@@ -138,16 +140,17 @@ impl Visualizer {
         Ok(())
     }
 
-    fn tick(&mut self, analysis: &analysis::Analysis) -> winit::event_loop::ControlFlow {
+    fn tick(
+        &mut self,
+        signal: &RingBuffer<f32>,
+        analysis: &analysis::Analysis,
+    ) -> winit::event_loop::ControlFlow {
         use vulkan::Value::F32;
 
         let read_index = analysis.read_index;
         let write_index = analysis.write_index;
 
-        analysis
-            .audio
-            .signal
-            .write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
+        signal.write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
         // analysis.low_pass_buffer.write_to_pointer(
         //     read_index,
         //     write_index,
@@ -209,7 +212,7 @@ pub struct Args {
 
     /// The audio buffer size
     #[arg(short, long, default_value = "4")]
-    audio_buffer_sec: u32,
+    audio_buffer_sec: usize,
 
     /// Enable vsync
     #[arg(long, action = clap::ArgAction::SetTrue)]
@@ -239,7 +242,8 @@ fn run_main(args: &Args) -> error::VResult<()> {
     // Analysis should be ticked once per "frame".
     let analysis = {
         let sender = server.as_ref().map(|(_, sender)| sender.clone());
-        let analysis = analysis::Analysis::new(args, audio, sender);
+        let sample_rate = audio.sample_rate();
+        let analysis = analysis::Analysis::new(args, sample_rate, sender);
         Cell::new(analysis)
     };
 
@@ -255,19 +259,22 @@ fn run_main(args: &Args) -> error::VResult<()> {
         })
         .expect("Error setting Ctrl-C handler");
         while run.load(std::sync::atomic::Ordering::SeqCst) {
-            analysis.as_mut_ref().tick();
+            analysis.as_mut_ref().tick(&audio.signal);
             std::thread::sleep(time::Duration::from_millis(16));
         }
     } else {
         // The visualizer should be ticked once per frame.
-        let (mut event_loop, visualizer) = Visualizer::new(&args, &analysis.as_ref())?;
+        let (mut event_loop, visualizer) =
+            Visualizer::new(&args, &audio.signal, &analysis.as_ref())?;
         let visualizer = Cell::new(visualizer);
 
         // Use the visual winit-based mainloop.
         event_loop.run_return(|event, &_, control_flow| {
             *control_flow = window::handle_event(&event, &|| {
-                analysis.as_mut_ref().tick();
-                visualizer.as_mut_ref().tick(&analysis.as_ref())
+                analysis.as_mut_ref().tick(&audio.signal);
+                visualizer
+                    .as_mut_ref()
+                    .tick(&audio.signal, &analysis.as_ref())
             });
         });
     }

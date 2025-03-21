@@ -16,10 +16,6 @@ impl Energy {
             total_energy: 0f32,
         }
     }
-
-    pub fn energy(&self) -> f32 {
-        self.total_energy / self.size as f32
-    }
 }
 
 impl Filter for Energy {
@@ -28,6 +24,6 @@ impl Filter for Energy {
         self.buffer.push(x);
 
         self.total_energy += x.powi(2) - old_x.powi(2);
-        self.total_energy
+        self.total_energy / self.size as f32
     }
 }

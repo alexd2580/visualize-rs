@@ -11,56 +11,78 @@ use dft::Dft;
 use server::FrameSender;
 
 use crate::{
-    audio::Audio,
     filters::{
-        biquad_band_pass::BiquadBandPass, energy::Energy, filter::Filter,
+        alpha_avg::AlphaAvg, biquad_band_pass::BiquadBandPass, energy::Energy, filter::Filter,
         max_decay_normalizer::MaxDecayNormalizer, statistical_summary::StatisticalSummary,
     },
     ring_buffer::RingBuffer,
     Args,
 };
 
-struct BeatDetector {
+struct BandToFrameEnergy {
     pub filter: BiquadBandPass,
     pub signal_energy: Energy,
-    pub energy_normalizer: MaxDecayNormalizer,
-    pub energy_stats: StatisticalSummary,
-
     pub frame_energy: f32,
-    pub is_beat: bool,
 }
 
-const FRAME_RATE: usize = 60;
-
-impl BeatDetector {
-    fn new(sample_rate: usize, center_fq: usize) -> Self {
+impl BandToFrameEnergy {
+    fn new(sample_rate: usize, center_fq: usize, q: f32) -> Self {
         Self {
-            filter: BiquadBandPass::new(sample_rate, center_fq, 10.0),
+            filter: BiquadBandPass::new(sample_rate, center_fq, q),
             signal_energy: Energy::new(sample_rate / 5),
-            energy_normalizer: MaxDecayNormalizer::new(0.995, 0.1),
-            energy_stats: StatisticalSummary::new(FRAME_RATE * 3),
             frame_energy: 0.0,
-            is_beat: false,
         }
     }
 
     fn sample(&mut self, x: f32) {
         let x = self.filter.sample(x);
-        self.signal_energy.sample(x);
+        self.frame_energy = self.signal_energy.sample(x);
+    }
+}
+
+struct FrameEnergyStats {
+    pub normalizer: MaxDecayNormalizer,
+    pub energy: f32,
+    pub short: StatisticalSummary,
+    pub long: AlphaAvg,
+    pub long_avg_threshold: f32,
+
+    pub over_threshold: bool,
+    pub is_beat: bool,
+}
+
+const FRAME_RATE: usize = 60;
+
+impl FrameEnergyStats {
+    fn new() -> Self {
+        Self {
+            normalizer: MaxDecayNormalizer::new(0.995, 0.1),
+            energy: 0.0,
+            short: StatisticalSummary::new(FRAME_RATE * 2),
+            long: AlphaAvg::new(0.9999),
+            long_avg_threshold: 0.4,
+            over_threshold: false,
+            is_beat: false,
+        }
     }
 
-    fn frame(&mut self) {
-        self.frame_energy = self.energy_normalizer.sample(self.signal_energy.energy());
-        self.energy_stats.sample(self.frame_energy);
-        self.is_beat = self.frame_energy > self.energy_stats.avg
+    fn sample(&mut self, x: f32) {
+        self.energy = self.normalizer.sample(x);
+        self.short.sample(self.energy);
+        let long_avg = self.long.sample(self.energy);
+
+        let shortterm_high = self.energy > self.short.avg;
+        let longterm_high = self.energy > long_avg.max(self.long_avg_threshold);
+
+        let was_over_threshold = self.over_threshold;
+        self.over_threshold = shortterm_high && longterm_high;
+        self.is_beat = !was_over_threshold && self.over_threshold;
     }
 }
 
 /// Note the reverse drop order.
 pub struct Analysis {
     pub epoch: time::Instant,
-
-    pub audio: Audio,
 
     pub read_index: usize,
     pub write_index: usize,
@@ -74,9 +96,11 @@ pub struct Analysis {
 
     pub signal_dft: Dft,
 
-    bass_70: BeatDetector,
-    bass_90: BeatDetector,
-    bass_110: BeatDetector,
+    energy_filters: Vec<BandToFrameEnergy>,
+    energy_normalizers: Vec<MaxDecayNormalizer>,
+
+    bass_70_energy: BandToFrameEnergy,
+    bass_70_stats: FrameEnergyStats,
 
     bass_buffer: RingBuffer<f32>,
 
@@ -97,16 +121,15 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    pub fn new(args: &Args, audio: Audio, broadcast: Option<Arc<FrameSender>>) -> Self {
-        let audio_buffer_size = audio.buffer_size();
+    pub fn new(args: &Args, sample_rate: usize, broadcast: Option<Arc<FrameSender>>) -> Self {
+        let audio_buffer_size = args.audio_buffer_sec * sample_rate;
 
         let dft_size = args.dft_size;
-        let sample_rate = audio.sample_rate();
 
-        let dft_window_per_s = sample_rate as f32 / dft_size as f32;
-        let dft_min_fq = dft_window_per_s * 1f32;
-        let dft_max_fq = dft_window_per_s * dft_size as f32 / 2f32;
-        log::info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
+        // let dft_window_per_s = sample_rate as f32 / dft_size as f32;
+        // let dft_min_fq = dft_window_per_s * 1f32;
+        // let dft_max_fq = dft_window_per_s * dft_size as f32 / 2f32;
+        // log::info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
 
         // let frequency_band_borders = [16, 60, 250, 500, 2000, 4000, 6000, 22000];
         // let frequency_band_border_indices = frequency_band_borders
@@ -117,18 +140,36 @@ impl Analysis {
 
         Self {
             epoch: Instant::now(),
-            audio,
             read_index: 0,
             write_index: 0,
             buf_size: 0,
             available_samples: 0,
             avg_available_samples: 44100f32 / 60f32,
             avg_available_samples_alpha: 0.95,
-            normalizer: MaxDecayNormalizer::new(0.99995, 0.05),
-            signal_dft: Dft::new(args.dft_size),
-            bass_70: BeatDetector::new(sample_rate, 70),
-            bass_90: BeatDetector::new(sample_rate, 90),
-            bass_110: BeatDetector::new(sample_rate, 110),
+
+            normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
+            signal_dft: Dft::new(dft_size),
+
+            energy_filters: vec![
+                BandToFrameEnergy::new(sample_rate, 50, 1.0),
+                BandToFrameEnergy::new(sample_rate, 50, 5.0),
+                BandToFrameEnergy::new(sample_rate, 80, 1.0),
+                BandToFrameEnergy::new(sample_rate, 80, 5.0),
+                BandToFrameEnergy::new(sample_rate, 100, 1.0),
+                BandToFrameEnergy::new(sample_rate, 100, 5.0),
+            ],
+            energy_normalizers: vec![
+                MaxDecayNormalizer::new(0.99995, 0.03),
+                MaxDecayNormalizer::new(0.99995, 0.03),
+                MaxDecayNormalizer::new(0.99995, 0.03),
+                MaxDecayNormalizer::new(0.99995, 0.03),
+                MaxDecayNormalizer::new(0.99995, 0.03),
+                MaxDecayNormalizer::new(0.99995, 0.03),
+            ],
+
+            bass_70_energy: BandToFrameEnergy::new(sample_rate, 60, 5.0),
+            bass_70_stats: FrameEnergyStats::new(),
+
             bass_buffer: RingBuffer::new(audio_buffer_size),
             // low_pass: LowPass::new(sample_rate, 100),
             // low_pass_buffer: RingBuffer::new(audio_buffer_size),
@@ -147,10 +188,10 @@ impl Analysis {
 
     /// Compute the read index (start of data to read), write index (index at which new data will
     /// be written (end of data to read) and the size of the ring buffer.
-    fn compute_data_indices(&mut self) -> (usize, usize, usize) {
+    fn compute_data_indices(&mut self, signal: &RingBuffer<f32>) -> (usize, usize, usize) {
         let read_index = self.bass_buffer.write_index;
-        let write_index = self.audio.signal.write_index;
-        let buf_size = self.audio.signal.data.len();
+        let write_index = signal.write_index;
+        let buf_size = signal.data.len();
 
         // Total available samples.
         let available_samples = if write_index < read_index {
@@ -164,7 +205,7 @@ impl Analysis {
         self.avg_available_samples = self.avg_available_samples * self.avg_available_samples_alpha
             + new_available as f32 * (1f32 - self.avg_available_samples_alpha);
 
-        // `+5` makes it so that i try to display more frames without lagging behind too much.
+        // `+ n` makes it so that i try to display more frames without lagging behind too much.
         // This is a magic number, might be different for different FPS.
         let mut consume_samples = self.avg_available_samples as usize + 2;
         let (sample_underrun, ok) = consume_samples.overflowing_sub(available_samples);
@@ -196,9 +237,11 @@ impl Analysis {
     fn sample(&mut self, x: f32) {
         let x = self.normalizer.sample(x);
 
-        self.bass_70.sample(x);
-        self.bass_90.sample(x);
-        self.bass_110.sample(x);
+        for f in &mut self.energy_filters {
+            f.sample(x);
+        }
+
+        self.bass_70_energy.sample(x);
 
         self.bass_buffer.push(x);
 
@@ -206,23 +249,24 @@ impl Analysis {
         // self.high_pass_buffer.push(self.high_pass.sample(x));
     }
 
-    pub fn tick(&mut self) {
-        let (read_index, write_index, buf_size) = self.compute_data_indices();
+    pub fn tick(&mut self, signal: &RingBuffer<f32>) {
+        let (read_index, write_index, buf_size) = self.compute_data_indices(signal);
 
         // Run sample-by-sample analysis.
         if write_index < read_index {
             for index in (read_index..buf_size).chain(0..write_index) {
-                self.sample(self.audio.signal.data[index]);
+                self.sample(signal.data[index]);
             }
         } else {
             for index in read_index..write_index {
-                self.sample(self.audio.signal.data[index]);
+                self.sample(signal.data[index]);
             }
         }
 
         // Run DFTs on filtered/split signals.
         let dft_vec = self.signal_dft.get_input_vec();
-        self.audio.signal.write_to_buffer(dft_vec);
+        // TODO use signal or an analysis copy?
+        signal.write_to_buffer(dft_vec);
         self.signal_dft.run_transform();
 
         // let low_pass_vec = self.low_pass_dft.get_input_vec();
@@ -238,28 +282,30 @@ impl Analysis {
 
         // let frequency_sum = bass_frequencies.iter().fold(0.0, |a, b| a + b);
 
-        self.bass_70.frame();
-        self.bass_90.frame();
-        self.bass_110.frame();
+        self.bass_70_stats.sample(self.bass_70_energy.frame_energy);
 
         let to_float = |x: bool| if x { 1.0 } else { 0.0 };
+        // println!(
+        //     "{}",
+        //     if self.bass_70_stats.is_beat {
+        //         "XXXXXX"
+        //     } else {
+        //         ""
+        //     }
+        // );
+
+        let energies: Vec<f32> = self.energy_filters.iter().map(|x| x.frame_energy).collect();
+        let energies = energies.into_iter().zip(self.energy_normalizers.iter_mut()).map(|(v, n)| n.sample(v)).collect();
 
         if let Some(broadcast) = &self.broadcast {
             broadcast
-                .send(vec![
-                    self.bass_70.frame_energy,
-                    self.bass_70.energy_stats.avg,
-                    self.bass_70.energy_stats.sd,
-                    to_float(self.bass_70.is_beat),
-                    self.bass_90.frame_energy,
-                    self.bass_90.energy_stats.avg,
-                    self.bass_90.energy_stats.sd,
-                    to_float(self.bass_90.is_beat),
-                    self.bass_110.frame_energy,
-                    self.bass_110.energy_stats.avg,
-                    self.bass_110.energy_stats.sd,
-                    to_float(self.bass_110.is_beat),
-                ])
+                .send(energies)
+                // .send(vec![
+                //     self.bass_70_stats.energy,
+                //     self.bass_70_stats.short.avg,
+                //     self.bass_70_stats.long.avg,
+                //     to_float(self.bass_70_stats.is_beat),
+                // ])
                 .expect("Failed to broadcast frame bass frequencies");
         }
     }

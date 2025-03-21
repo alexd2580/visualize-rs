@@ -3,7 +3,7 @@ use crate::utils::mix;
 use super::filter::Filter;
 
 pub struct AlphaAvg {
-    pub alpha: f32,
+    alpha: f32,
     pub avg: f32,
 }
 
