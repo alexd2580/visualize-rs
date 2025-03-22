@@ -47,20 +47,21 @@ struct FrameEnergyStats {
     pub long: AlphaAvg,
     pub long_avg_threshold: f32,
 
+    pub under_threshold: bool,
     pub over_threshold: bool,
     pub is_beat: bool,
 }
 
-const FRAME_RATE: usize = 60;
-
 impl FrameEnergyStats {
     fn new() -> Self {
+        let frames_per_s = 44100usize / 64;
         Self {
-            normalizer: MaxDecayNormalizer::new(0.995, 0.1),
+            normalizer: MaxDecayNormalizer::new(0.9999, 0.03),
             energy: 0.0,
-            short: StatisticalSummary::new(FRAME_RATE * 2),
+            short: StatisticalSummary::new(3 * frames_per_s),
             long: AlphaAvg::new(0.9999),
             long_avg_threshold: 0.4,
+            under_threshold: true,
             over_threshold: false,
             is_beat: false,
         }
@@ -69,20 +70,68 @@ impl FrameEnergyStats {
     fn sample(&mut self, x: f32) {
         self.energy = self.normalizer.sample(x);
         self.short.sample(self.energy);
-        let long_avg = self.long.sample(self.energy);
 
-        let shortterm_high = self.energy > self.short.avg;
+        let long_avg = self.long.sample(self.energy);
         let longterm_high = self.energy > long_avg.max(self.long_avg_threshold);
 
+        let shortterm_high = self.energy > 1.1 * self.short.avg;
+        let shortterm_low = self.energy < 0.9 * self.short.avg;
+
         let was_over_threshold = self.over_threshold;
-        self.over_threshold = shortterm_high && longterm_high;
+        if self.under_threshold && shortterm_high && longterm_high {
+            self.under_threshold = false;
+            self.over_threshold = true;
+        }
         self.is_beat = !was_over_threshold && self.over_threshold;
+
+        if self.over_threshold && shortterm_low {
+            self.under_threshold = true;
+            self.over_threshold = false;
+        }
+    }
+}
+
+pub struct BpmTracker {
+    phase: u64,
+    periods: RingBuffer<u64>,
+    period: f32,
+    bpm: f32,
+}
+
+impl BpmTracker {
+    fn new() -> Self {
+        BpmTracker {
+            phase: 0,
+            periods: RingBuffer::new_with_default(10, 0),
+            period: 60.0,
+            bpm: 60.0,
+        }
+    }
+
+    fn sample(&mut self, phase: u64) {
+        let period = phase - self.phase;
+        self.periods.push(period);
+        self.phase = phase;
+
+        let mut sorted = self.periods.data.clone();
+        sorted.sort_unstable();
+        let period = (sorted[sorted.len() / 2] + sorted[sorted.len() / 2 + 1]) as f32 / 2.0;
+        if period > 0.0 {
+            self.period = period;
+            self.bpm = 44100.0 * 60.0 / period;
+        }
+    }
+
+    fn beat_probability(&self, phase: u64) -> f32 {
+        let iterations = (phase - self.phase) as f32 / self.period;
+        2.0 * (0.5 - iterations.fract()).abs() / iterations.max(1.0)
     }
 }
 
 /// Note the reverse drop order.
 pub struct Analysis {
     pub epoch: time::Instant,
+    pub samples_processed: u64,
 
     pub read_index: usize,
     pub write_index: usize,
@@ -96,11 +145,11 @@ pub struct Analysis {
 
     pub signal_dft: Dft,
 
-    energy_filters: Vec<BandToFrameEnergy>,
-    energy_normalizers: Vec<MaxDecayNormalizer>,
+    bass_energy: BandToFrameEnergy,
+    bass_stats: FrameEnergyStats,
 
-    bass_70_energy: BandToFrameEnergy,
-    bass_70_stats: FrameEnergyStats,
+    bpm_tracker: BpmTracker,
+    beat_in_tick: bool,
 
     bass_buffer: RingBuffer<f32>,
 
@@ -140,6 +189,8 @@ impl Analysis {
 
         Self {
             epoch: Instant::now(),
+            samples_processed: 0,
+
             read_index: 0,
             write_index: 0,
             buf_size: 0,
@@ -150,25 +201,11 @@ impl Analysis {
             normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
             signal_dft: Dft::new(dft_size),
 
-            energy_filters: vec![
-                BandToFrameEnergy::new(sample_rate, 50, 1.0),
-                BandToFrameEnergy::new(sample_rate, 50, 5.0),
-                BandToFrameEnergy::new(sample_rate, 80, 1.0),
-                BandToFrameEnergy::new(sample_rate, 80, 5.0),
-                BandToFrameEnergy::new(sample_rate, 100, 1.0),
-                BandToFrameEnergy::new(sample_rate, 100, 5.0),
-            ],
-            energy_normalizers: vec![
-                MaxDecayNormalizer::new(0.99995, 0.03),
-                MaxDecayNormalizer::new(0.99995, 0.03),
-                MaxDecayNormalizer::new(0.99995, 0.03),
-                MaxDecayNormalizer::new(0.99995, 0.03),
-                MaxDecayNormalizer::new(0.99995, 0.03),
-                MaxDecayNormalizer::new(0.99995, 0.03),
-            ],
+            bass_energy: BandToFrameEnergy::new(sample_rate, 50, 6.0),
+            bass_stats: FrameEnergyStats::new(),
 
-            bass_70_energy: BandToFrameEnergy::new(sample_rate, 60, 5.0),
-            bass_70_stats: FrameEnergyStats::new(),
+            bpm_tracker: BpmTracker::new(),
+            beat_in_tick: false,
 
             bass_buffer: RingBuffer::new(audio_buffer_size),
             // low_pass: LowPass::new(sample_rate, 100),
@@ -236,21 +273,44 @@ impl Analysis {
 
     fn sample(&mut self, x: f32) {
         let x = self.normalizer.sample(x);
-
-        for f in &mut self.energy_filters {
-            f.sample(x);
-        }
-
-        self.bass_70_energy.sample(x);
-
+        self.bass_energy.sample(x);
         self.bass_buffer.push(x);
+
+        self.samples_processed += 1;
+
+        // Every 64th sample is a frame.
+        if self.samples_processed & 0b111111 == 0 {
+            self.bass_stats.sample(self.bass_energy.frame_energy);
+            if self.bass_stats.is_beat {
+                self.beat_in_tick = true;
+                self.bpm_tracker.sample(self.samples_processed);
+            }
+
+            let to_float = |x: bool| if x { 1.0 } else { 0.0 };
+            if let Some(broadcast) = &self.broadcast {
+                broadcast
+                    .send(vec![
+                        self.bass_stats.energy,
+                        self.bass_stats.short.avg,
+                        self.bass_stats.long.avg,
+                        to_float(self.bass_stats.is_beat),
+                        self.bpm_tracker.beat_probability(self.samples_processed),
+                    ])
+                    .expect("Failed to broadcast frame bass frequencies");
+            }
+        }
 
         // self.low_pass_buffer.push(self.low_pass.sample(x));
         // self.high_pass_buffer.push(self.high_pass.sample(x));
     }
 
+    // A tick is @ 60Hz
+    // A sample is @ 44100Hz
+    // A frame is @ 44100Hz / 64 == 689.0625Hz
     pub fn tick(&mut self, signal: &RingBuffer<f32>) {
         let (read_index, write_index, buf_size) = self.compute_data_indices(signal);
+
+        self.beat_in_tick = false;
 
         // Run sample-by-sample analysis.
         if write_index < read_index {
@@ -282,31 +342,16 @@ impl Analysis {
 
         // let frequency_sum = bass_frequencies.iter().fold(0.0, |a, b| a + b);
 
-        self.bass_70_stats.sample(self.bass_70_energy.frame_energy);
-
-        let to_float = |x: bool| if x { 1.0 } else { 0.0 };
-        // println!(
-        //     "{}",
-        //     if self.bass_70_stats.is_beat {
-        //         "XXXXXX"
-        //     } else {
-        //         ""
-        //     }
-        // );
-
-        let energies: Vec<f32> = self.energy_filters.iter().map(|x| x.frame_energy).collect();
-        let energies = energies.into_iter().zip(self.energy_normalizers.iter_mut()).map(|(v, n)| n.sample(v)).collect();
-
-        if let Some(broadcast) = &self.broadcast {
-            broadcast
-                .send(energies)
-                // .send(vec![
-                //     self.bass_70_stats.energy,
-                //     self.bass_70_stats.short.avg,
-                //     self.bass_70_stats.long.avg,
-                //     to_float(self.bass_70_stats.is_beat),
-                // ])
-                .expect("Failed to broadcast frame bass frequencies");
-        }
+        // let to_float = |x: bool| if x { 1.0 } else { 0.0 };
+        // if let Some(broadcast) = &self.broadcast {
+        //     broadcast
+        //         .send(vec![
+        //             self.bass_stats.energy,
+        //             self.bass_stats.short.avg,
+        //             self.bass_stats.long.avg,
+        //             to_float(self.beat_in_tick),
+        //         ])
+        //         .expect("Failed to broadcast frame bass frequencies");
+        // }
     }
 }

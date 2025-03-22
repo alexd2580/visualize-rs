@@ -25,7 +25,7 @@ function createCircleTexture(app) {
   // Create template shape.
   const templateShape = new PIXI.Graphics()
     .beginFill(0xffffff)
-    .lineStyle({ width: 1, color: 0x333333, alignment: 0 })
+    .lineStyle({ width: 0, color: 0x333333, alignment: 0 })
     .drawCircle(0, 0, 5);
 
   // Create texture.
@@ -50,9 +50,6 @@ function createCircleTexture(app) {
 
   return renderTexture;
 }
-
-const nmin = (a, b) => a < b ? a : b;
-const nmax = (a, b) => a > b ? a : b;
 
 async function initializeGraphics(floatsToSeries, plotSeries) {
   const app = new PIXI.Application({ background: '#1099bb', resizeTo: window });
@@ -85,7 +82,7 @@ async function initializeGraphics(floatsToSeries, plotSeries) {
   let numGraphs = 1;
 
   connectToBackend((message) => {
-    dataOffset += 7;
+    dataOffset += 1;
     dataContainer.position.x = app.screen.width - dataOffset;
 
     const floats = new Float32Array(message.data);
@@ -143,41 +140,37 @@ function plotSimple(value, add) {
   add(value, 1.0, colors[0]);
 }
 
+// initializeGraphics(floats => floats, plotSimple);
+
 function floatsToEnergyStats(floats) {
-  // TODO
+  const results = [];
+  for (let i = 0; i < floats.length; i += 5) {
+    results.push({
+      energy: floats[i + 0],
+      short: floats[i + 1],
+      long: floats[i + 2],
+      is_beat: floats[i + 3] > 0.5,
+      confidence: floats[i + 4]
+    });
+  }
+  return results;
 }
 
-function plotEnergy(stats) {
-  // const v = floats[values_per_series * i];
-  // const short = floats[values_per_series * i + 1];
-  // const long = floats[values_per_series * i + 2]
-  // const is_beat = floats[values_per_series * i + 3] > 0.5 && i == max_i;
-  // // const d = detectors[i];
-  // // d.sample(v);
-  // //
-  // // if (d.is_beat) {
-  // //   add(base - slice_size * scale[i] * Math.min(2, d.extraordinarity) / 2, 2.0, colors[i]);
-  // // }
-  // add(base - sliceSize * v, is_beat ? 4.0 : 0.8, colors[0]);
-  // add(base - sliceSize * v, is_beat ? 4.0 : 0.8, colors[0]);
-  // add(base - sliceSize * short, 0.7, colors[1]);
-  // // add(base - slice_size * sd, 0.7, colors[2]);
-  //
-  // const min_long = nmin(long, 0.4);
-  // const max_long = nmax(long, 0.4);
-  //
-  // add(base - sliceSize * min_long, 0.2, colors[3]);
-  // add(base - sliceSize * max_long, 0.7, colors[3]);
-  //
-  // // add(base - slice_size * scale[i], 0.7, colors[i + 2]);
-  // // add(base - slice_size * scale[i], 0.7, colors[i + 3]);
-  // // add(base - slice_size * scale[i] * d.short_avg.avg, 0.7, colors[i + 1]);
-  // // add(base - slice_size * scale[i] * d.beat_threshold_factor * d.medium_avg.avg, 0.7, colors[i + 2]);
-  // // add(base - slice_size * scale[i] * d.noise_threshold_factor * d.long_avg.avg, 0.7, colors[i + 3]);
-  //
-  // // add(base - slice_size * (d.last_beat_samples_ago / d.spb % 1), 0.5, colors[i + 4]);
-  // // add(base - slice_size * d.bpm_confidence, 0.5, colors[i + 4]);
-  // // add(base - slice_size * d.beat_confidence, 0.5, colors[i + 5]);
+const nmin = (a, b) => a < b ? a : b;
+const nmax = (a, b) => a > b ? a : b;
+
+function plotStats(stats, add) {
+  add(stats.energy, stats.is_beat ? 4.0 : 0.8, colors[0]);
+  add(stats.short, 0.5, colors[1]);
+  add(stats.long, 0.5, colors[2]);
+
+  const min_long = nmin(stats.long, 0.4);
+  const max_long = nmax(stats.long, 0.4);
+
+  // add(min_long, 0.2, colors[3]);
+  // add(max_long, 0.7, colors[3]);
+
+  add(stats.confidence, stats.confidence, colors[3]);
 }
 
-initializeGraphics(floats => floats, plotSimple);
+initializeGraphics(floatsToEnergyStats, plotStats);
