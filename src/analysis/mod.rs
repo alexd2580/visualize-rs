@@ -8,6 +8,7 @@ use std::{
 };
 
 use dft::Dft;
+use log::{info, warn};
 use server::FrameSender;
 
 use crate::{
@@ -26,10 +27,10 @@ struct BandToFrameEnergy {
 }
 
 impl BandToFrameEnergy {
-    fn new(sample_rate: usize, center_fq: usize, q: f32) -> Self {
+    fn new(sample_rate: u32, center_fq: usize, q: f32) -> Self {
         Self {
             filter: BiquadBandPass::new(sample_rate, center_fq, q),
-            signal_energy: Energy::new(sample_rate / 5),
+            signal_energy: Energy::new(sample_rate as usize / 5),
             frame_energy: 0.0,
         }
     }
@@ -92,39 +93,156 @@ impl FrameEnergyStats {
 }
 
 pub struct BpmTracker {
-    phase: u64,
-    periods: RingBuffer<u64>,
-    period: f32,
+    sample_rate: i64,
+    sample_rate_f: f32,
+
+    phase_origin: u64,
+    phase: f32,
+    error_dt: f32,
+
+    short_period_estimator: AlphaAvg,
+    period: AlphaAvg,
     bpm: f32,
+
+    last_beats: RingBuffer<u64>,
+    last_delta: RingBuffer<f32>,
 }
 
 impl BpmTracker {
-    fn new() -> Self {
+    fn new(sample_rate: u32) -> Self {
+        let size_history = 30;
         BpmTracker {
-            phase: 0,
-            periods: RingBuffer::new_with_default(10, 0),
-            period: 60.0,
-            bpm: 60.0,
+            sample_rate: sample_rate as i64,
+            sample_rate_f: sample_rate as f32,
+
+            phase_origin: 0,
+            phase: 0.0,
+            error_dt: 0.0,
+
+            short_period_estimator: AlphaAvg::new_with_value(0.9, 0.5),
+            period: AlphaAvg::new_with_value(0.9995, 0.5),
+            bpm: 120.0,
+
+            last_beats: RingBuffer::new_with_default(size_history, 0),
+            last_delta: RingBuffer::new_with_default(size_history, 0.5),
         }
     }
 
-    fn sample(&mut self, phase: u64) {
-        let period = phase - self.phase;
-        self.periods.push(period);
-        self.phase = phase;
-
-        let mut sorted = self.periods.data.clone();
-        sorted.sort_unstable();
-        let period = (sorted[sorted.len() / 2] + sorted[sorted.len() / 2 + 1]) as f32 / 2.0;
-        if period > 0.0 {
-            self.period = period;
-            self.bpm = 44100.0 * 60.0 / period;
-        }
+    fn sample_to_rel_time(&self, sample_index: u64) -> f32 {
+        (sample_index - self.phase_origin) as f32 / self.sample_rate_f - self.phase
     }
 
-    fn beat_probability(&self, phase: u64) -> f32 {
-        let iterations = (phase - self.phase) as f32 / self.period;
-        2.0 * (0.5 - iterations.fract()).abs() / iterations.max(1.0)
+    fn sample(&mut self, sample_index: u64) {
+        /* MOVE THE ORIGIN CLOSER TO THE SERIES TO PREVENT FLOAT IMPRECISION */
+
+        let delta_pre = self
+            .sample_to_rel_time(sample_index)
+            .rem_euclid(self.period.avg);
+
+        let first_buffered_beat = self.last_beats.data[self.last_beats.write_index];
+
+        // What is the phase relative to this beat? We do this to prevent f32 imprecision and a
+        // strong effect of varying BPM relative to a faraway origin (drift? small error has huge
+        // impact on the far future). We keep tracking the samples in u64, u32 would wraparound in
+        // ~27 hours.
+        let delta = (first_buffered_beat - self.phase_origin) as f32 / self.sample_rate_f;
+        self.phase_origin = first_buffered_beat;
+        // phase - delta gives how much phase (including period) there is at T in the future.
+        // The further I go into the future, the more negative the phase (aka origin) becomes.
+        // `rem_euclid` ensures the rem result is always positive.
+        self.phase = (self.phase - delta).rem_euclid(self.period.avg);
+
+        let delta_post = self
+            .sample_to_rel_time(sample_index)
+            .rem_euclid(self.period.avg);
+        if (delta_pre - delta_post).abs() > 0.00001 {
+            warn!("Moving the origin caused a big discrepancy");
+        }
+
+        /* FILTER COMPLETELY WRONG BEAT DELTAS */
+
+        // We use these limits to ignore totally off-beat deltas.
+        let delta_90 = 60f32 / 90.0; // large
+        let delta_180 = 60f32 / 180.0; // small
+
+        // Compute delta to previous beat.
+        let delta_s = (sample_index - self.last_beats.last()) as f32 / self.sample_rate_f;
+        // Always record the last beat!
+        self.last_beats.push(sample_index);
+        // Ignore the delta if it doesn't fit our expectations.
+        if delta_180 < delta_s && delta_s < delta_90 {
+            self.last_delta.push(delta_s);
+        }
+
+        /* RECOMPUTE BPM USING MEDIAN + SLOWLY MOVING AVERAGE */
+
+        let mut sorted = self.last_delta.data.clone();
+        sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
+        let estimated_period = (sorted[sorted.len() / 2] + sorted[sorted.len() / 2 + 1]) / 2.0;
+
+        self.short_period_estimator.sample(estimated_period);
+        self.period.sample(estimated_period);
+
+        /* ALLOW FOR QUICK TEMPO CHANGE USING SHORT TERM OVERRIDE */
+
+        // Diff greater than 2 BPM.
+        if (self.short_period_estimator.avg - self.period.avg).abs() > 0.01 {
+            info!(
+                "Shortterm delta {:.1} deviates from longterm delta {:.1}. Resetting long-term avg",
+                60.0 / self.short_period_estimator.avg,
+                60.0 / self.period.avg
+            );
+            self.period.avg = self.short_period_estimator.avg;
+        }
+        // self.period.avg = 60.0 / 147.0;
+        self.bpm = 60.0 / self.period.avg;
+
+        /* FIT THE PHASE ONTO THE LAST KNOWN BEATS USING GRADIENT DESCENT */
+
+        let error_with_phase = |phase: f32| {
+            self.last_beats
+                .data
+                .iter()
+                .map(|index| {
+                    let time = (index - self.phase_origin) as f32 / self.sample_rate_f;
+                    let offset = (time - phase) / self.period.avg;
+                    (2.0 * (offset - offset.round())).powi(2)
+                })
+                .sum::<f32>()
+        };
+
+        let delta_t = 0.001 * estimated_period; // 0.1% of period
+        let error_now = error_with_phase(self.phase);
+        let error_offset = error_with_phase(self.phase + delta_t);
+        self.error_dt = (error_offset - error_now) / delta_t;
+
+        // Bigger phase shifts beats forward.
+        // Bigger period shifts beats forward.
+        self.phase -= 0.0005 * self.error_dt;
+        // self.period.avg += 0.00003 * self.error_dt;
+        // dbg!((self.error_dt, self.phase));
+
+        // let error_dt = error_delta / delta_t;
+        // if error_delta.abs() > 0.001 {
+        //     let step = delta_t * error_now / (error_offset - error_now);
+        //     // if step < 0.1 * estimated_period {
+        //     self.phase = self.phase - step;
+        //
+        //     let new_error = error_with_phase(self.phase);
+        //     info!("{:.3} -> {:.3}", error_now, new_error);
+        //
+        //     // } else {
+        //     //     warn!("En {:.3}; En+1 {:.3}", error_now, error_offset);
+        //     //     warn!("Got extreme newton step {:.3}ms. Skipping.", step * 1000.0);
+        //     // }
+        //     dbg!(self.phase);
+        // }
+    }
+
+    fn beat_probability(&self, sample_index: u64) -> f32 {
+        let offset = (sample_index - self.phase_origin) as f32 / self.sample_rate_f - self.phase;
+        let offset = (offset / self.period.avg).fract();
+        2.0 * (offset - 0.5).abs()
     }
 }
 
@@ -170,8 +288,8 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    pub fn new(args: &Args, sample_rate: usize, broadcast: Option<Arc<FrameSender>>) -> Self {
-        let audio_buffer_size = args.audio_buffer_sec * sample_rate;
+    pub fn new(args: &Args, sample_rate: u32, broadcast: Option<Arc<FrameSender>>) -> Self {
+        let audio_buffer_size = (args.audio_buffer_sec * sample_rate) as usize;
 
         let dft_size = args.dft_size;
 
@@ -204,7 +322,7 @@ impl Analysis {
             bass_energy: BandToFrameEnergy::new(sample_rate, 50, 6.0),
             bass_stats: FrameEnergyStats::new(),
 
-            bpm_tracker: BpmTracker::new(),
+            bpm_tracker: BpmTracker::new(sample_rate),
             beat_in_tick: false,
 
             bass_buffer: RingBuffer::new(audio_buffer_size),
@@ -295,6 +413,7 @@ impl Analysis {
                         self.bass_stats.long.avg,
                         to_float(self.bass_stats.is_beat),
                         self.bpm_tracker.beat_probability(self.samples_processed),
+                        // self.bpm_tracker.error_dt / 400.0 + 0.5,
                     ])
                     .expect("Failed to broadcast frame bass frequencies");
             }

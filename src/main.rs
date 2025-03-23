@@ -212,7 +212,7 @@ pub struct Args {
 
     /// The audio buffer size
     #[arg(short, long, default_value = "4")]
-    audio_buffer_sec: usize,
+    audio_buffer_sec: u32,
 
     /// Enable vsync
     #[arg(long, action = clap::ArgAction::SetTrue)]

@@ -8,8 +8,12 @@ pub struct AlphaAvg {
 }
 
 impl AlphaAvg {
+    pub fn new_with_value(alpha: f32, avg: f32) -> Self {
+        Self { alpha, avg }
+    }
+
     pub fn new(alpha: f32) -> Self {
-        Self { alpha, avg: 0f32 }
+        Self::new_with_value(alpha, 0.0)
     }
 }
 

@@ -41,12 +41,12 @@ fn choose_stream_config<ConfigsIter: Iterator<Item = cpal::SupportedStreamConfig
 
 struct Cpal {
     host: cpal::Host,
-    pub sample_rate: usize,
+    pub sample_rate: u32,
 }
 
 impl Cpal {
     fn cpal_sample_rate(&self) -> cpal::SampleRate {
-        cpal::SampleRate(u32::try_from(self.sample_rate).unwrap())
+        cpal::SampleRate(self.sample_rate)
     }
 
     fn default_input_device(&self) -> Result<cpal::Device, Error> {
@@ -302,7 +302,7 @@ impl Deref for Audio {
 }
 
 impl Audio {
-    pub fn sample_rate(&self) -> usize {
+    pub fn sample_rate(&self) -> u32 {
         self.cpal.sample_rate
     }
 
@@ -323,12 +323,12 @@ impl Audio {
         cpal.run_input_stream(device, read)
     }
 
-    pub fn new(seconds: usize, delayed_echo: bool) -> VResult<Self> {
+    pub fn new(seconds: u32, delayed_echo: bool) -> VResult<Self> {
         let cpal = Cpal::new();
 
         // TODO todo what? unwrap? sample rate?
         let buffer_size = seconds * cpal.sample_rate;
-        let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size));
+        let ring_buffer = ThreadShared::new(stereo::Stereo::new(buffer_size as usize));
 
         let read_device = cpal.default_input_device()?;
         let input_stream = Audio::init_input_stream(&cpal, read_device, &ring_buffer)?;

@@ -15,7 +15,7 @@ pub struct BiquadBandPass {
 }
 
 impl BiquadBandPass {
-    pub fn new(sample_rate: usize, center_fq: usize, q: f32) -> Self {
+    pub fn new(sample_rate: u32, center_fq: usize, q: f32) -> Self {
         let sr = sample_rate as f32;
         let fc = center_fq as f32;
         let omega = 2.0 * PI * fc / sr;
