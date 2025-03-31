@@ -34,7 +34,7 @@ impl Stereo {
         for (index, channels) in samples.chunks(num_channels).skip(space_at_end).enumerate() {
             left[index] = channels[0];
             right[index] = channels[1];
-            signal[index] = channels[0];
+            signal[index] = channels[1];
         }
 
         let write_index = (self.left.write_index + num_samples) % self.left.size;

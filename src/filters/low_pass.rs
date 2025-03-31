@@ -6,8 +6,8 @@ pub struct LowPass {
 }
 
 impl LowPass {
-    pub fn new(sample_rate: usize, cutoff_fq: usize) -> Self {
-        let dt = 1.0 / sample_rate as f32;
+    pub fn new(sample_rate: f32, cutoff_fq: usize) -> Self {
+        let dt = 1.0 / sample_rate;
         let tau = 1.0 / (2.0 * std::f32::consts::PI * cutoff_fq as f32);
         let alpha = dt / (tau + dt);
 

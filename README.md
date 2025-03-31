@@ -4,6 +4,38 @@ Rewrite of [oscilloscope-visualizer](https://github.com/alexd2580/oscilloscope-v
 
 ![current snapshot](./snapshot.png)
 
+### Beat/BPM Tracking
+
+Huge focus on BPM tracking for reliable and rhytmical effects.
+Beat detection alone is not sufficient for good effects that can bridge gaps in the beat. The whole pipeline looks roughly like this:
+
+1. Tap audio data (mono)
+1. Normalize with decay normalizer (dynamic/manual changes in volume shouldn't affect the visualizer)
+1. Use a biquad band pass to filter low frequencies
+1. Use another decay normalizer on the bass signal
+1. Compute the short-term energy of the signal using a window
+1. Every n-th (64) sample, evaluate whether the current sample is a beat
+1. Record the timestamps of beat samples and the deltas relative to the previous beat in a ringbuffer
+1. Ignore deltas which lie clearly outside the desired BPM range (110-160)
+1. Compute the mode over tha last N integer BPM values (60.0 / period) (from the ringbuffer)
+1. Use the mode as a candidate for a BPM change
+1. Every n-th (4) beat, check whether the BPM candidate has a phase with minimal error
+1. Error is defined as the sum of squares of offsets from their expected positions
+1. If the candidate matches the series better than the current phase/period, reset to the new candidate
+1. Otherwise deny the BPM switch and use gradient descent to finetune the phase
+
+The BPM tracker works OK, what definitely needs improvement is beat detection
+across a wide variety of music styles/types. Even just electronic music has
+many different styles of bass at different frequency bands.
+
+### Debugging
+
+For live-debugging I have build a websocket server that emits the current state
+of the bass-energy-filter, beat detector and bpm confidence. It is consumed by
+a µ PIXI.js app that displays it in a live graph.
+
+![bpm-tracking](./bpm-tracking.png)
+
 # Running
 
 ```bash

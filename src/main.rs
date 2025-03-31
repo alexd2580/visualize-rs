@@ -212,7 +212,7 @@ pub struct Args {
 
     /// The audio buffer size
     #[arg(short, long, default_value = "4")]
-    audio_buffer_sec: u32,
+    audio_buffer_sec: f32,
 
     /// Enable vsync
     #[arg(long, action = clap::ArgAction::SetTrue)]
@@ -229,6 +229,11 @@ pub struct Args {
     /// Display the visualizer
     #[arg(long, action = clap::ArgAction::SetTrue)]
     headless: bool,
+
+    #[arg(long, default_value = "110")]
+    slowest_bpm: u32,
+    #[arg(long, default_value = "160")]
+    fastest_bpm: u32,
 }
 
 fn run_main(args: &Args) -> error::VResult<()> {
@@ -242,7 +247,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
     // Analysis should be ticked once per "frame".
     let analysis = {
         let sender = server.as_ref().map(|(_, sender)| sender.clone());
-        let sample_rate = audio.sample_rate();
+        let sample_rate = audio.sample_rate() as f32;
         let analysis = analysis::Analysis::new(args, sample_rate, sender);
         Cell::new(analysis)
     };
@@ -259,7 +264,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
         })
         .expect("Error setting Ctrl-C handler");
         while run.load(std::sync::atomic::Ordering::SeqCst) {
-            analysis.as_mut_ref().tick(&audio.signal);
+            analysis.as_mut_ref().on_tick(&audio.signal);
             std::thread::sleep(time::Duration::from_millis(16));
         }
     } else {
@@ -271,7 +276,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
         // Use the visual winit-based mainloop.
         event_loop.run_return(|event, &_, control_flow| {
             *control_flow = window::handle_event(&event, &|| {
-                analysis.as_mut_ref().tick(&audio.signal);
+                analysis.as_mut_ref().on_tick(&audio.signal);
                 visualizer
                     .as_mut_ref()
                     .tick(&audio.signal, &analysis.as_ref())

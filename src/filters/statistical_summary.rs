@@ -2,6 +2,13 @@ use crate::ring_buffer::RingBuffer;
 
 use super::filter::Filter;
 
+#[derive(PartialEq)]
+pub enum Grade {
+    Low,
+    Normal,
+    High,
+}
+
 pub struct StatisticalSummary {
     size: usize,
     buffer: RingBuffer<f32>,
@@ -25,6 +32,16 @@ impl StatisticalSummary {
             total_energy: 0f32,
             energy: 0f32,
             sd: 0f32,
+        }
+    }
+
+    pub fn grade(&self, x: f32) -> Grade {
+        if x < self.avg - 0.5 * self.sd {
+            Grade::Low
+        } else if x > self.avg + 0.5 * self.sd {
+            Grade::High
+        } else {
+            Grade::Normal
         }
     }
 }

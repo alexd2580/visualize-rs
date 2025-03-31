@@ -82,7 +82,7 @@ async function initializeGraphics(floatsToSeries, plotSeries) {
   let numGraphs = 1;
 
   connectToBackend((message) => {
-    dataOffset += 1;
+    dataOffset += 0.25;
     dataContainer.position.x = app.screen.width - dataOffset;
 
     const floats = new Float32Array(message.data);
@@ -144,13 +144,14 @@ function plotSimple(value, add) {
 
 function floatsToEnergyStats(floats) {
   const results = [];
-  for (let i = 0; i < floats.length; i += 5) {
+  for (let i = 0; i < floats.length; i += 6) {
     results.push({
       energy: floats[i + 0],
       short: floats[i + 1],
       long: floats[i + 2],
       is_beat: floats[i + 3] > 0.5,
-      confidence: floats[i + 4]
+      confidence: floats[i + 4],
+      phase_error: floats[i + 5]
     });
   }
   return results;
@@ -160,7 +161,9 @@ const nmin = (a, b) => a < b ? a : b;
 const nmax = (a, b) => a > b ? a : b;
 
 function plotStats(stats, add) {
-  add(stats.energy, stats.is_beat ? 4.0 : 0.8, colors[0]);
+  add(0.5, 0.2, 0x000000);
+
+  add(stats.energy, stats.is_beat ? 3.0 : 0.8, colors[0]);
   add(stats.short, 0.5, colors[1]);
   add(stats.long, 0.5, colors[2]);
 
@@ -171,6 +174,7 @@ function plotStats(stats, add) {
   // add(max_long, 0.7, colors[3]);
 
   add(stats.confidence, stats.confidence, colors[3]);
+  add(stats.phase_error, 0.5, colors[4]);
 }
 
 initializeGraphics(floatsToEnergyStats, plotStats);
