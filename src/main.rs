@@ -22,7 +22,7 @@ use winit::{
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
     /// The shader module path
-    #[arg(short, long, num_args = 0.., default_value = "shaders/debug.comp")]
+    #[arg(short, long, num_args = 0.., default_value = "shaders/default.comp")]
     shader_paths: Vec<std::path::PathBuf>,
 
     /// The DFT size
