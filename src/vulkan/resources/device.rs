@@ -1,6 +1,6 @@
 use std::{ffi::CStr, ops::Deref, rc::Rc};
 
-use log::debug;
+use tracing::debug;
 
 use ash::{self, extensions, vk};
 

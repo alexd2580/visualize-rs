@@ -1,12 +1,11 @@
-use std::{thread, time};
-
-use log::debug;
+use tracing::{debug, instrument};
 
 use ash::vk::SurfaceKHR as VkSurface;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    dpi::PhysicalSize,
+    event::{self, ElementState, KeyboardInput, WindowEvent},
+    event_loop::EventLoop,
     window::{Window as WinitWindow, WindowBuilder},
 };
 
@@ -14,10 +13,15 @@ use crate::{error::VResult, vulkan::resources::instance::Instance};
 
 pub struct Window(WinitWindow);
 
-impl Window {
-    pub fn new() -> VResult<(EventLoop<()>, Self)> {
-        debug!("Initializing video system");
+// impl Debug for Window {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "Window")
+//     }
+// }
 
+impl Window {
+    #[instrument]
+    pub fn new() -> VResult<(EventLoop<()>, Self)> {
         let event_loop = EventLoop::new();
         let window = WindowBuilder::new()
             .with_title("visualize-rs")
@@ -45,13 +49,21 @@ impl Window {
     }
 }
 
-pub fn handle_event(event: &Event<()>, tick: &dyn Fn() -> ControlFlow) -> ControlFlow {
+pub enum Event {
+    Tick,
+    Close,
+    KeyPress(event::VirtualKeyCode),
+    Resize(u32, u32),
+    Other,
+}
+
+pub fn translate_event(event: event::Event<()>) -> Event {
     match event {
-        Event::WindowEvent {
+        event::Event::WindowEvent {
             event: WindowEvent::CloseRequested,
             ..
-        } => ControlFlow::Exit,
-        Event::WindowEvent {
+        } => Event::Close,
+        event::Event::WindowEvent {
             event:
                 WindowEvent::KeyboardInput {
                     input:
@@ -63,22 +75,21 @@ pub fn handle_event(event: &Event<()>, tick: &dyn Fn() -> ControlFlow) -> Contro
                     ..
                 },
             ..
-        } => match key {
-            VirtualKeyCode::Escape | VirtualKeyCode::Q => ControlFlow::Exit,
-            VirtualKeyCode::K => {
-                thread::sleep(time::Duration::from_secs(1));
-                ControlFlow::Poll
-            }
-            _ => ControlFlow::Poll,
-        },
-        Event::WindowEvent {
-            event: WindowEvent::Resized(..),
+        } => Event::KeyPress(key),
+
+        // match key {
+        //     VirtualKeyCode::Escape | VirtualKeyCode::Q => ControlFlow::Exit,
+        //     VirtualKeyCode::K => {
+        //         thread::sleep(time::Duration::from_secs(1));
+        //         ControlFlow::Poll
+        //     }
+        //     _ => ControlFlow::Poll,
+        // },
+        event::Event::WindowEvent {
+            event: WindowEvent::Resized(PhysicalSize { width, height }),
             ..
-        } => {
-            // Ignoring window event. Resize handled via Vulkan.
-            ControlFlow::Poll
-        }
-        Event::MainEventsCleared => tick(),
-        _ => ControlFlow::Poll,
+        } => Event::Resize(width, height),
+        event::Event::MainEventsCleared => Event::Tick,
+        _ => Event::Other,
     }
 }

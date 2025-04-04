@@ -1,4 +1,4 @@
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 
 use ash::{extensions::khr::Surface as SurfaceLoader, vk};
 
@@ -24,13 +24,13 @@ impl SurfaceInfo {
     ) -> Result<Self, Error> {
         debug!("Collecting surface info");
 
-        dbg!(&**physical_device, &**surface, physical_device.compute_queue_family_index);
+        // dbg!(&**physical_device, &**surface, physical_device.compute_queue_family_index);
         let present_support = surface_loader.get_physical_device_surface_support(
             **physical_device,
             physical_device.compute_queue_family_index,
             **surface,
         )?;
-        dbg!(&present_support);
+        // dbg!(&present_support);
         if !present_support {
             dbg!("RIP");
         }

@@ -1,6 +1,6 @@
 use glsl::{parser::Parse as _, syntax};
-use log::warn;
 use std::{fs, path::Path};
+use tracing::warn;
 
 use ash::vk;
 

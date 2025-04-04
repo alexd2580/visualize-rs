@@ -12,6 +12,7 @@ use beat_detector::BeatDetector;
 use bpm_tracker::BpmTracker;
 use dft::Dft;
 use server::FrameSender;
+use tracing::debug;
 
 use crate::{
     filters::{filter::Filter, max_decay_normalizer::MaxDecayNormalizer},
@@ -21,16 +22,15 @@ use crate::{
 
 /// Note the reverse drop order.
 pub struct Analysis {
-    pub epoch: time::Instant,
-    pub samples_processed: u64,
-
-    pub read_index: usize,
-    pub write_index: usize,
+    sample_rate: f32,
     pub buf_size: usize,
 
-    available_samples: usize,
-    avg_available_samples: f32,
-    avg_available_samples_alpha: f32,
+    pub epoch: time::Instant,
+    last_tick: time::Instant,
+    pub samples_processed: u64,
+
+    pub tick_start_index: usize,
+    pub tick_end_index: usize,
 
     normalizer: MaxDecayNormalizer,
 
@@ -59,8 +59,6 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    const BPM_FRAMES_PER_SAMPLE: f32 = 64.0;
-
     pub fn new(args: &Args, sample_rate: f32, broadcast: Option<Arc<FrameSender>>) -> Self {
         let audio_buffer_size = (args.audio_buffer_sec * sample_rate) as usize;
 
@@ -69,7 +67,7 @@ impl Analysis {
         // let dft_window_per_s = sample_rate as f32 / dft_size as f32;
         // let dft_min_fq = dft_window_per_s * 1f32;
         // let dft_max_fq = dft_window_per_s * dft_size as f32 / 2f32;
-        // log::info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
+        // info!("DFT can analyze frequencies in the range: {dft_min_fq} hz - {dft_max_fq} hz");
 
         // let frequency_band_borders = [16, 60, 250, 500, 2000, 4000, 6000, 22000];
         // let frequency_band_border_indices = frequency_band_borders
@@ -79,15 +77,15 @@ impl Analysis {
         // let beat_dft_upper = dft_index_of_frequency(125, audio.sample_rate(), dft_size);
 
         Self {
+            sample_rate,
+            buf_size: audio_buffer_size,
+
             epoch: Instant::now(),
+            last_tick: Instant::now(),
             samples_processed: 0,
 
-            read_index: 0,
-            write_index: 0,
-            buf_size: 0,
-            available_samples: 0,
-            avg_available_samples: 44100f32 / 60f32,
-            avg_available_samples_alpha: 0.95,
+            tick_start_index: 0,
+            tick_end_index: 0,
 
             normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
             signal: RingBuffer::new(audio_buffer_size),
@@ -108,51 +106,31 @@ impl Analysis {
     }
 
     /// Compute the read index (start of data to read), write index (index at which new data will
-    /// be written (end of data to read) and the size of the ring buffer.
-    fn compute_data_indices(&mut self, signal: &RingBuffer<f32>) -> (usize, usize, usize) {
+    /// be written (end of data to read).
+    fn update_slice_indices(&mut self, signal: &RingBuffer<f32>, delta: f32) {
+        // Requiring self.signal and signal to be of same size.
         let read_index = self.signal.write_index;
         let write_index = signal.write_index;
-        let buf_size = signal.data.len();
 
-        // Total available samples.
+        // Total available samples - samples that haven't been copied from `signal` to `self.signal`.
         let available_samples = if write_index < read_index {
-            write_index + buf_size - read_index
+            write_index + self.buf_size - read_index
         } else {
             write_index - read_index
         };
 
-        // New available in this frame.
-        let new_available = available_samples - self.available_samples;
-        self.avg_available_samples = self.avg_available_samples * self.avg_available_samples_alpha
-            + new_available as f32 * (1f32 - self.avg_available_samples_alpha);
+        // I want to consume this much!
+        let mut consume_samples = (self.sample_rate * delta) as usize + 5;
 
-        // `+ n` makes it so that i try to display more frames without lagging behind too much.
-        // This is a magic number, might be different for different FPS.
-        let mut consume_samples = self.avg_available_samples as usize + 2;
-        let (sample_underrun, ok) = consume_samples.overflowing_sub(available_samples);
-        let sample_underrun_pct = 100f32 * sample_underrun as f32 / consume_samples as f32;
-        if !ok && consume_samples > available_samples {
-            if sample_underrun_pct > 50f32 {
-                log::warn!("Sample underrun by {sample_underrun} ({sample_underrun_pct:.2}%)");
-            }
+        if consume_samples > available_samples {
+            // Don't care about underruns...
+            // let underrun = consume_samples - available_samples;
+            // warn!("Sample underrun by {underrun}");
             consume_samples = available_samples;
         }
 
-        let sample_overrun_pct =
-            100f32 * available_samples as f32 / (consume_samples as f32 + 1f32);
-        if ok && sample_overrun_pct > 2000f32 {
-            log::warn!("Sample overrun by {available_samples} ({sample_overrun_pct:.2}%)");
-        }
-
-        self.available_samples = available_samples - consume_samples;
-
-        let write_index = (read_index + consume_samples) % buf_size;
-
-        self.read_index = read_index;
-        self.write_index = write_index;
-        self.buf_size = buf_size;
-
-        (read_index, write_index, buf_size)
+        self.tick_start_index = read_index;
+        self.tick_end_index = (read_index + consume_samples) % self.buf_size;
     }
 
     fn on_pcm_sample(&mut self, x: f32) {
@@ -184,20 +162,26 @@ impl Analysis {
         }
     }
 
-    // A tick is @ 60Hz
+    // A tick is @ 60Hz / or so i think...
     // A sample is @ 44100Hz
     // A frame is @ 44100Hz / 64 == 689.0625Hz
     pub fn on_tick(&mut self, signal: &RingBuffer<f32>) {
+        let delta = self.last_tick.elapsed().as_secs_f32();
+        self.last_tick = Instant::now();
+
         self.beat_in_tick = false;
 
         // Run sample-by-sample analysis.
-        let (read_index, write_index, buf_size) = self.compute_data_indices(signal);
-        if write_index < read_index {
-            for index in (read_index..buf_size).chain(0..write_index) {
+        self.update_slice_indices(signal, delta);
+        let start = self.tick_start_index;
+        let end = self.tick_end_index;
+
+        if end < start {
+            for index in (start..self.buf_size).chain(0..end) {
                 self.on_pcm_sample(signal.data[index]);
             }
         } else {
-            for index in read_index..write_index {
+            for index in start..end {
                 self.on_pcm_sample(signal.data[index]);
             }
         }
@@ -207,7 +191,6 @@ impl Analysis {
         // TODO use signal or an analysis copy?
         signal.write_to_buffer(dft_vec);
         self.signal_dft.run_transform();
-
 
         // let low_pass_vec = self.low_pass_dft.get_input_vec();
         // self.low_pass_buffer.write_to_buffer(low_pass_vec);

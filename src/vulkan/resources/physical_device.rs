@@ -1,8 +1,6 @@
 use std::{ops::Deref, rc::Rc};
 
-use core::ops::Not;
-
-use log::debug;
+use tracing::debug;
 
 use ash::{extensions::khr::Surface as SurfaceLoader, vk};
 

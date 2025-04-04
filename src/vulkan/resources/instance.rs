@@ -1,6 +1,6 @@
 use std::{ffi::CStr, ops::Deref, rc::Rc};
 
-use log::debug;
+use tracing::debug;
 
 use ash::{self, vk};
 
@@ -21,7 +21,6 @@ impl Deref for Instance {
 
 impl Instance {
     pub unsafe fn new(window: &Rc<Window>, entry: &ash::Entry) -> Result<Rc<Self>, Error> {
-        debug!("Creating instance");
         let app_info = vk::ApplicationInfo::builder().api_version(vk::make_api_version(0, 1, 3, 0));
 
         // Instance extensions.
@@ -52,7 +51,6 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
-        debug!("Destroying instance");
         unsafe {
             self.destroy_instance(None);
         }

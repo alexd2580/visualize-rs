@@ -1,6 +1,6 @@
 use std::{ffi::CString, ops::Deref, rc::Rc};
 
-use log::debug;
+use tracing::debug;
 
 use ash::vk;
 

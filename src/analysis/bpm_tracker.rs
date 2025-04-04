@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use tracing::{debug, warn};
 
 use crate::{ring_buffer::RingBuffer, Args};
 
@@ -230,7 +230,6 @@ impl BpmTracker {
 
     pub fn beat_probability(&self, sample_index: u64) -> f32 {
         let error = (0.5 / self.phase_error).min(1.0);
-
 
         let offset = (sample_index - self.phase_origin) as f32 / self.sample_rate - self.phase;
         let period = 60.0 / self.bpm as f32;

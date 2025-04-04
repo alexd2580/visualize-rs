@@ -5,9 +5,9 @@ use ash::{
     vk,
 };
 use filetime::FileTime;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 
-use crate::{error::Error, utils::mtime, window::Window};
+use crate::{error::VResult, utils::mtime, window::Window};
 
 pub mod multi_buffer;
 pub mod multi_image;
@@ -20,10 +20,6 @@ use self::resources::{
     pipeline::Pipeline, pipeline_layout::PipelineLayout, sampler::Sampler, semaphore::Semaphore,
     shader_module::ShaderModule, surface::Surface, surface_info::SurfaceInfo, swapchain::Swapchain,
 };
-
-pub enum Event {
-    Resized,
-}
 
 #[derive(Clone)]
 pub enum Value {
@@ -57,7 +53,7 @@ struct ShaderResources {
 }
 
 impl ShaderResources {
-    pub unsafe fn new(device: &Rc<Device>, shader_path: &Path) -> Result<Self, Error> {
+    pub unsafe fn new(device: &Rc<Device>, shader_path: &Path) -> VResult<Self> {
         // Compute shader.
         let shader_module_mtime = mtime(shader_path)?;
         let shader_module = ShaderModule::new(device, shader_path)?;
@@ -104,7 +100,7 @@ impl ShaderResources {
         present_name: &str,
         present_index: usize,
         frame_index: usize,
-    ) -> Result<Vec<vk::WriteDescriptorSet>, Error> {
+    ) -> VResult<Vec<vk::WriteDescriptorSet>> {
         self.descriptors.get_write_descriptor_set(
             available_images,
             available_buffers,
@@ -168,8 +164,10 @@ impl Vulkan {
         window: &Rc<Window>,
         compute_shader_paths: &[impl Deref<Target = Path>],
         vsync: bool,
-    ) -> Result<Self, Error> {
-        debug!("Initializing video system");
+    ) -> VResult<Self> {
+        let span = tracing::span!(tracing::Level::INFO, "Vulkan::new");
+        let _span_guard = span.enter();
+
         unsafe {
             // Core.
             let window = window.clone();
@@ -217,7 +215,7 @@ impl Vulkan {
             let shader_resources = compute_shader_paths
                 .iter()
                 .map(|path| ShaderResources::new(&device, path))
-                .collect::<Result<_, Error>>()?;
+                .collect::<VResult<_>>()?;
 
             let reuse_command_buffer_fence = Fence::new(&device)?;
             let image_acquired_semaphore = Semaphore::new(&device)?;
@@ -273,7 +271,7 @@ impl Vulkan {
         }
     }
 
-    unsafe fn recompile_shader_if_modified(&mut self) -> Result<(), Error> {
+    unsafe fn recompile_shader_if_modified(&mut self) -> VResult<()> {
         for index in 0..self.shader_resources.len() {
             let path = &self.shader_resources[index].shader_module.source_path;
             let previous_mtime = self.shader_resources[index].shader_module_mtime;
@@ -332,8 +330,10 @@ impl Vulkan {
         self.invalidate_shader_association_cache();
     }
 
-    pub unsafe fn reinitialize_swapchain(&mut self) -> Result<(), Error> {
-        debug!("Reinitializing swapchain");
+    pub unsafe fn reinitialize_swapchain(&mut self) -> VResult<()> {
+        let span = tracing::span!(tracing::Level::INFO, "Vulkan::reinitialize_swapchain");
+        let _span_guard = span.enter();
+
         self.wait_idle();
 
         // After a resize (TODO Fix function name) all images need to be reinitialized anyway. The
@@ -354,7 +354,12 @@ impl Vulkan {
         )?;
         if !present_support {
             dbg!("RIP, attempting recreation of surface...");
-            self.surface = Surface::new(&self.window, &self._entry, &self._instance, &self.surface_loader)?;
+            self.surface = Surface::new(
+                &self.window,
+                &self._entry,
+                &self._instance,
+                &self.surface_loader,
+            )?;
         }
 
         self.surface_info = SurfaceInfo::new(
@@ -398,7 +403,7 @@ impl Vulkan {
         Ok(())
     }
 
-    unsafe fn begin_command_buffer(&self) -> Result<(), Error> {
+    unsafe fn begin_command_buffer(&self) -> VResult<()> {
         let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         Ok(self
@@ -406,7 +411,7 @@ impl Vulkan {
             .begin_command_buffer(**self.command_buffer, &command_buffer_begin_info)?)
     }
 
-    unsafe fn end_command_buffer(&self) -> Result<(), Error> {
+    unsafe fn end_command_buffer(&self) -> VResult<()> {
         Ok(self.device.end_command_buffer(**self.command_buffer)?)
     }
 
@@ -415,7 +420,7 @@ impl Vulkan {
         wait_semaphores: &[vk::Semaphore],
         wait_semaphore_stages: &[vk::PipelineStageFlags],
         signal_semaphores: &[vk::Semaphore],
-    ) -> Result<(), Error> {
+    ) -> VResult<()> {
         let submit_info = vk::SubmitInfo::builder()
             .command_buffers(&[**self.command_buffer])
             .wait_semaphores(wait_semaphores)
@@ -430,11 +435,11 @@ impl Vulkan {
         )?)
     }
 
-    unsafe fn queue_submit_task(&self) -> Result<(), Error> {
+    unsafe fn queue_submit_task(&self) -> VResult<()> {
         self.queue_submit(&[], &[], &[])
     }
 
-    unsafe fn queue_submit_compute(&self) -> Result<(), Error> {
+    unsafe fn queue_submit_compute(&self) -> VResult<()> {
         self.queue_submit(
             &[**self.image_acquired_semaphore],
             &[vk::PipelineStageFlags::COMPUTE_SHADER],
@@ -476,7 +481,7 @@ impl Vulkan {
         );
     }
 
-    unsafe fn transition_stale_images(&mut self) -> Result<(), Error> {
+    unsafe fn transition_stale_images(&mut self) -> VResult<()> {
         self.reuse_command_buffer_fence.wait()?;
         self.reuse_command_buffer_fence.reset()?;
         self.begin_command_buffer()?;
@@ -488,7 +493,7 @@ impl Vulkan {
         self.queue_submit_task()
     }
 
-    unsafe fn acquire_next_image(&self) -> Result<(usize, vk::Image), Error> {
+    unsafe fn acquire_next_image(&self) -> VResult<(usize, vk::Image)> {
         let (present_index, _) = self.swapchain_loader.acquire_next_image(
             ***self.swapchain.as_ref().unwrap(),
             std::u64::MAX,
@@ -578,7 +583,7 @@ impl Vulkan {
         );
     }
 
-    unsafe fn present(&self, present_index: usize) -> Result<(), Error> {
+    unsafe fn present(&self, present_index: usize) -> VResult<()> {
         // TODO WHY DOES THIS WORK?!?!?! THIS MIGHT ACTUALLY CRASH?!
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&[**self.compute_complete_semaphore])
@@ -599,7 +604,7 @@ impl Vulkan {
     unsafe fn render_next_frame(
         &mut self,
         push_constant_values: &HashMap<String, Value>,
-    ) -> Result<Option<Event>, Error> {
+    ) -> VResult<()> {
         let (present_index, present_image) = self.acquire_next_image()?;
 
         self.reuse_command_buffer_fence.wait()?;
@@ -651,17 +656,10 @@ impl Vulkan {
         self.end_command_buffer()?;
         self.queue_submit_compute()?;
 
-        // Present as soon as `compute_complete_semaphore` trips.
-        let present_result = self.present(present_index);
         self.num_frames += 1;
 
-        if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) = present_result {
-            info!("Received rendering error, likely due to mismatched resolutions");
-            self.reinitialize_swapchain()?;
-            Ok(Some(Event::Resized))
-        } else {
-            Ok(None)
-        }
+        // Present as soon as `compute_complete_semaphore` trips.
+        self.present(present_index)
     }
 
     pub fn wait_idle(&self) {
@@ -672,10 +670,7 @@ impl Vulkan {
         }
     }
 
-    pub unsafe fn tick(
-        &mut self,
-        push_constant_values: &HashMap<String, Value>,
-    ) -> Result<Option<Event>, Error> {
+    pub unsafe fn tick(&mut self, push_constant_values: &HashMap<String, Value>) -> VResult<()> {
         self.transition_stale_images()?;
         self.recompile_shader_if_modified()?;
         self.render_next_frame(push_constant_values)

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use log::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -125,11 +125,11 @@ impl DelayedOutput {
         cpal: &Cpal,
         device: cpal::Device,
         ring_buffer: &ThreadShared<Stereo>,
+        delay_s: f32,
     ) -> Result<cpal::Stream, Error> {
-        debug!("Initializing output stream");
         let buffer = ring_buffer.clone();
         let mut read_index = 0;
-        let mut insert_delay_samples = 5000;
+        let mut insert_delay_samples = (cpal.sample_rate as f32 * delay_s) as usize;
         // If we want to delay the input stream, then we need to be able to do so.
         assert!(2 * insert_delay_samples < buffer.read().left.size);
 
@@ -241,7 +241,7 @@ impl DelayedOutput {
         // Run the delayed output stream on the current default device.
         let output_stream = {
             let write_device = cpal.default_output_device()?;
-            DelayedOutput::init_output_stream(cpal, write_device, ring_buffer)?
+            DelayedOutput::init_output_stream(cpal, write_device, ring_buffer, 0.5)?
         };
 
         let app_name = "visualize-rs";
@@ -315,7 +315,6 @@ impl Audio {
         device: cpal::Device,
         ring_buffer: &ThreadShared<Stereo>,
     ) -> Result<cpal::Stream, Error> {
-        debug!("Initializing input stream");
         let buffer = ring_buffer.clone();
         let read = move |samples: &[f32], _: &cpal::InputCallbackInfo| {
             buffer.write().write_samples(samples);
@@ -323,6 +322,7 @@ impl Audio {
         cpal.run_input_stream(device, read)
     }
 
+    #[instrument(name = "Audio::new")]
     pub fn new(seconds: f32, delayed_echo: bool) -> VResult<Self> {
         let cpal = Cpal::new();
 

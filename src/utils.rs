@@ -54,3 +54,7 @@ pub fn dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: us
     // 3:   3 * 44100 / 1024 =   129.2 Hz
     (frequency as f32 * dft_size as f32 / sample_rate as f32).round() as usize
 }
+
+pub fn sleep_ms(ms: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+}

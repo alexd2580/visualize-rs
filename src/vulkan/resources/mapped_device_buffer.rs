@@ -1,7 +1,7 @@
 use std::{ffi::c_void, ops::Deref, rc::Rc};
 
 use ash::{self, vk};
-use log::debug;
+use tracing::debug;
 
 use crate::error::Error;
 

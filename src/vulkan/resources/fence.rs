@@ -1,6 +1,6 @@
 use std::{ops::Deref, rc::Rc};
 
-use log::debug;
+use tracing::debug;
 
 use ash::vk;
 
@@ -23,7 +23,7 @@ impl Deref for Fence {
 
 impl Fence {
     pub unsafe fn new(device: &Rc<Device>) -> Result<Rc<Self>, Error> {
-        debug!("Creating fence");
+        debug!("Fence()");
         let device = device.clone();
         let create_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
         let fence = device.create_fence(&create_info, None)?;

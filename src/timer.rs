@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time};
 
-use log::info;
+use tracing::info;
 
 use crate::utils::mix;
 

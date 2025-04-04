@@ -1,4 +1,3 @@
-use log::{debug, error};
 use std::{
     fmt::Display,
     fs,
@@ -6,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
+use tracing::{debug, error};
 
 use ash::vk;
 
@@ -93,7 +93,7 @@ impl Display for ShaderModule {
 
 impl ShaderModule {
     pub unsafe fn new(device: &Rc<Device>, source_path: &Path) -> Result<Rc<Self>, Error> {
-        debug!("Creating shader module");
+        debug!("ShaderModule({})", source_path.to_str().unwrap());
         let (local_size, variable_declarations, block_declarations) =
             analysis::analyze_shader(source_path)?;
 
@@ -132,7 +132,7 @@ impl ShaderModule {
 
 impl Drop for ShaderModule {
     fn drop(self: &mut ShaderModule) {
-        debug!("Destroying shader module");
+        debug!("~ShaderModule({})", self.source_path.to_str().unwrap());
         unsafe {
             self.device.destroy_shader_module(self.shader_module, None);
         }

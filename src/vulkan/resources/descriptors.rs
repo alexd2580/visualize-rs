@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use log::debug;
+use tracing::debug;
 
 use ash::vk;
 

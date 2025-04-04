@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use log::{debug, error};
+use tracing::{debug, error};
 
 use crate::{error::Error, utils::exec_command};
 

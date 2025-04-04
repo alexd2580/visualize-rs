@@ -1,7 +1,7 @@
 use std::{ops::Deref, rc::Rc};
 
 use ash::vk;
-use log::debug;
+use tracing::debug;
 
 use crate::error::Error;
 
@@ -68,7 +68,7 @@ impl MultiImage {
         size: vk::Extent2D,
         num_images: usize,
     ) -> Result<Rc<Self>, Error> {
-        debug!("Creating image of size {:?}", size);
+        debug!("MultiImage(w={}, h={})", size.width, size.height);
         let images = (0..num_images)
             .map(|_| {
                 MultiImageUnit::new(
@@ -97,6 +97,9 @@ impl Vulkan {
         size: vk::Extent2D,
         num_images: Option<usize>,
     ) -> Result<Rc<MultiImage>, Error> {
+        let span = tracing::span!(tracing::Level::INFO, "Vulkan::new_multi_image", name = name);
+        let _span_guard = span.enter();
+
         unsafe {
             let num_images = num_images.unwrap_or(self.surface_info.desired_image_count);
             let image = MultiImage::new(

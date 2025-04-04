@@ -2,7 +2,7 @@ use std::{ops::Deref, rc::Rc};
 
 use ash::{extensions::khr::Swapchain as SwapchainLoader, vk};
 
-use log::debug;
+use tracing::debug;
 
 use crate::error::Error;
 
