@@ -620,7 +620,6 @@ impl Vulkan {
         );
 
         for index in 0..self.shader_resources.len() {
-            println!("{:?}", self.shader_resources[index].shader_module.source_path);
             let write_descriptor_set = self.shader_resources[index].get_write_descriptor_set(
                 &self.available_images,
                 &self.available_buffers,

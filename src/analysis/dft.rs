@@ -124,6 +124,5 @@ impl Dft {
             *x = *x * x.conj();
         }
         self.run_inverse();
-        // println!("{:?}", self.input);
     }
 }
