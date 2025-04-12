@@ -11,6 +11,14 @@ pub struct ImageView {
     image_view: vk::ImageView,
 }
 
+impl std::fmt::Debug for ImageView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageView")
+            .field("image_view", &self.image_view)
+            .finish()
+    }
+}
+
 impl Deref for ImageView {
     type Target = vk::ImageView;
 

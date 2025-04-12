@@ -82,7 +82,7 @@ async function initializeGraphics(floatsToSeries, plotSeries) {
   let numGraphs = 1;
 
   connectToBackend((message) => {
-    dataOffset += 0.5;
+    dataOffset += 1.0;
     dataContainer.position.x = app.screen.width - dataOffset;
 
     const floats = new Float32Array(message.data);

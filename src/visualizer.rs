@@ -1,4 +1,9 @@
-use std::{collections::HashMap, rc::Rc, time::Instant};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    time::Instant,
+};
 
 use ash::vk;
 use ring_buffer::RingBuffer;
@@ -14,7 +19,41 @@ use crate::{
     window::Window,
     Args,
 };
-// Required to use run_return on event loop.
+
+#[derive(Debug)]
+struct PushConstants(HashMap<String, vulkan::Value>);
+
+impl Deref for PushConstants {
+    type Target = HashMap<String, vulkan::Value>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for PushConstants {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl PushConstants {
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    fn bool(&mut self, name: &str, bool: bool) {
+        self.insert(name.to_owned(), vulkan::Value::Bool(bool));
+    }
+
+    fn u32(&mut self, name: &str, u32: u32) {
+        self.insert(name.to_owned(), vulkan::Value::U32(u32));
+    }
+
+    fn f32(&mut self, name: &str, f32: f32) {
+        self.insert(name.to_owned(), vulkan::Value::F32(f32));
+    }
+}
 
 pub struct Visualizer {
     signal_gpu: Rc<multi_buffer::MultiBuffer>,
@@ -60,21 +99,29 @@ impl Visualizer {
         let vulkan = &mut self.vulkan;
         let image_size = vulkan.surface_info.surface_resolution;
 
-        let intermediate = vulkan.new_multi_image("intermediate", image_size, None)?;
-        let intermediate_prev = vulkan.prev_shift(&intermediate, "intermediate_prev");
-        self.images.push(intermediate);
-        self.images.push(intermediate_prev);
+        let canvas = vulkan.new_multi_image("canvas", image_size, None)?;
+        self.images.push(canvas);
 
-        let highlights = vulkan.new_multi_image("highlights", image_size, None)?;
-        self.images.push(highlights);
-        let bloom_h = vulkan.new_multi_image("bloom_h", image_size, None)?;
-        self.images.push(bloom_h);
-        let bloom_hv = vulkan.new_multi_image("bloom_hv", image_size, None)?;
-        self.images.push(bloom_hv);
-        let result = vulkan.new_multi_image("result", image_size, None)?;
-        let result_prev = vulkan.prev_shift(&result, "result_prev");
-        self.images.push(result);
-        self.images.push(result_prev);
+        let frame = vulkan.new_multi_image("frame", image_size, None)?;
+        let frame_prev = vulkan.prev_shift(&frame, "frame_prev");
+
+        self.images.push(frame);
+        self.images.push(frame_prev);
+
+        // let intermediate_prev = vulkan.prev_shift(&intermediate, "intermediate_prev");
+        // self.images.push(intermediate);
+        // self.images.push(intermediate_prev);
+
+        // let highlights = vulkan.new_multi_image("highlights", image_size, None)?;
+        // self.images.push(highlights);
+        // let bloom_h = vulkan.new_multi_image("bloom_h", image_size, None)?;
+        // self.images.push(bloom_h);
+        // let bloom_hv = vulkan.new_multi_image("bloom_hv", image_size, None)?;
+        // self.images.push(bloom_hv);
+        // let result = vulkan.new_multi_image("result", image_size, None)?;
+        // let result_prev = vulkan.prev_shift(&result, "result_prev");
+        // self.images.push(result);
+        // self.images.push(result_prev);
 
         Ok(())
     }
@@ -149,17 +196,17 @@ impl Visualizer {
         let _span_guard = span.enter();
 
         self.new_resolution = None;
-        // Use w/h?
-        self.reinitialize_images()?;
+
         unsafe {
             self.vulkan.reinitialize_swapchain()?;
         }
+
+        // Use w/h?
+        self.reinitialize_images()?;
         Ok(())
     }
 
     pub fn tick(&mut self, signal: &RingBuffer<f32>, analysis: &Analysis) -> VResult<()> {
-        use vulkan::Value::F32;
-
         if self.new_resolution.is_some() {
             // Don't render anything.
             sleep_ms(16);
@@ -196,21 +243,28 @@ impl Visualizer {
         //     .high_pass_dft
         //     .write_to_pointer(self.high_pass_dft_gpu.mapped(0));
 
-        let mut push_constant_values = HashMap::new();
+        let mut push_constants = PushConstants::new();
 
-        // let is_beat = analysis.beat_detectors[0].is_beat;
-        // push_constant_values.insert("is_beat".to_owned(), Bool(is_beat));
+        push_constants.u32("frame_index", self.vulkan.num_frames as u32);
+        push_constants.f32("time", analysis.epoch.elapsed().as_secs_f32());
 
-        let now = analysis.epoch.elapsed().as_secs_f32();
-        push_constant_values.insert("now".to_owned(), F32(now));
+        let bass_energy = analysis.beat_detector.bass_energy.frame_energy;
+        push_constants.f32("bass_energy", bass_energy);
+        push_constants.bool("is_beat", analysis.beat_in_tick);
+        push_constants.u32("real_beats", analysis.real_beats);
+
+        let confidence = analysis.bpm_tracker.bpm_confidence();
+        push_constants.f32("bpm_confidence", confidence);
+        push_constants.f32("bpm_period", analysis.bpm_tracker.bpm.period);
+        push_constants.u32("quarter_beat_index", analysis.quarter_beat_index);
+        push_constants.f32("beat_fract", analysis.beat_fract);
 
         if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) =
-            unsafe { self.vulkan.tick(&push_constant_values) }
+            unsafe { self.vulkan.tick(&push_constants) }
         {
             self.debounce_resize(0, 0);
         };
 
-        self.vulkan.num_frames += 1;
         Ok(())
     }
 }

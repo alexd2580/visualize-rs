@@ -21,6 +21,12 @@ pub struct MultiImageUnit {
     pub view: Rc<ImageView>,
 }
 
+impl std::fmt::Debug for MultiImageUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiImageUnit").field("image", &*self.image).field("memory", &self.memory).field("view", &self.view).finish()
+    }
+}
+
 impl MultiImageUnit {
     pub unsafe fn new(
         physical_device: &PhysicalDevice,
@@ -49,6 +55,7 @@ impl MultiImageUnit {
     }
 }
 
+#[derive(Debug)]
 pub struct MultiImage(Vec<MultiImageUnit>);
 
 impl Deref for MultiImage {

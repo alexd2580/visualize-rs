@@ -103,6 +103,9 @@ impl DescriptorBinding {
         } else {
             frame_index % self.instances.len()
         };
+        unsafe {
+            println!("{: <10}\ttotal {}\tframe: {}\tinstance_index: {}\timage_view: {:?}", self.name, self.instances.len(), frame_index, instance_index, (*self.instances[instance_index].p_image_info).image_view);
+        }
         Ok(self.instances[instance_index])
     }
 }

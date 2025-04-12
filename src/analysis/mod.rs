@@ -12,7 +12,6 @@ use beat_detector::BeatDetector;
 use bpm_tracker::BpmTracker;
 use dft::Dft;
 use server::FrameSender;
-use tracing::debug;
 
 use crate::{
     filters::{filter::Filter, max_decay_normalizer::MaxDecayNormalizer},
@@ -27,7 +26,7 @@ pub struct Analysis {
 
     pub epoch: time::Instant,
     last_tick: time::Instant,
-    pub samples_processed: u64,
+    pub sample_index: u64,
 
     pub tick_start_index: usize,
     pub tick_end_index: usize,
@@ -37,10 +36,14 @@ pub struct Analysis {
     signal: RingBuffer<f32>,
     pub signal_dft: Dft,
 
-    beat_detector: BeatDetector,
-    bpm_tracker: BpmTracker,
+    pub beat_detector: BeatDetector,
+    pub bpm_tracker: BpmTracker,
 
-    beat_in_tick: bool,
+    pub beat_in_tick: bool,
+    pub real_beats: u32,
+
+    pub beat_fract: f32,
+    pub quarter_beat_index: u32,
 
     // pub low_pass: LowPass,
     // pub low_pass_buffer: RingBuffer<f32>,
@@ -82,7 +85,7 @@ impl Analysis {
 
             epoch: Instant::now(),
             last_tick: Instant::now(),
-            samples_processed: 0,
+            sample_index: 0,
 
             tick_start_index: 0,
             tick_end_index: 0,
@@ -93,7 +96,11 @@ impl Analysis {
 
             beat_detector: BeatDetector::new(args, sample_rate),
             bpm_tracker: BpmTracker::new(args, sample_rate),
+
             beat_in_tick: false,
+            real_beats: 0,
+            beat_fract: 0.0,
+            quarter_beat_index: 0,
 
             // low_pass: LowPass::new(sample_rate, 100),
             // low_pass_buffer: RingBuffer::new(audio_buffer_size),
@@ -134,18 +141,19 @@ impl Analysis {
     }
 
     fn on_pcm_sample(&mut self, x: f32) {
-        self.samples_processed += 1;
+        self.sample_index += 1;
 
         let x = self.normalizer.sample(x);
         self.signal.push(x);
 
-        if self.beat_detector.on_pcm_sample(self.samples_processed, x) {
+        if self.beat_detector.on_pcm_sample(self.sample_index, x) {
+            self.real_beats += 1;
             self.beat_in_tick = true;
-            self.bpm_tracker.on_beat(self.samples_processed);
+            self.bpm_tracker.on_beat(self.sample_index);
         }
 
-        // Every 64th PCM sample.
-        if self.samples_processed & 0b111111 == 0 {
+        // Every 128th PCM sample.
+        if self.sample_index & 0b1111111 == 0 {
             let to_float = |x: bool| if x { 1.0 } else { 0.0 };
             if let Some(broadcast) = &self.broadcast {
                 broadcast
@@ -154,7 +162,7 @@ impl Analysis {
                         self.beat_detector.bass_stats.short.avg,
                         self.beat_detector.bass_stats.long.avg,
                         to_float(self.beat_in_tick),
-                        self.bpm_tracker.beat_probability(self.samples_processed),
+                        self.bpm_tracker.beat_probability(self.sample_index),
                         self.bpm_tracker.phase_error / 50.0 + 0.5,
                     ])
                     .expect("Failed to broadcast frame bass frequencies");
@@ -170,6 +178,7 @@ impl Analysis {
         self.last_tick = Instant::now();
 
         self.beat_in_tick = false;
+        let quarter_pre = (self.beat_fract / 0.25).fract();
 
         // Run sample-by-sample analysis.
         self.update_slice_indices(signal, delta);
@@ -184,6 +193,12 @@ impl Analysis {
             for index in start..end {
                 self.on_pcm_sample(signal.data[index]);
             }
+        }
+
+        self.beat_fract = self.bpm_tracker.sample_to_beat_fract(self.sample_index);
+        let quarter_post = (self.beat_fract / 0.25).fract();
+        if quarter_post < quarter_pre {
+            self.quarter_beat_index += 1;
         }
 
         // Run DFTs on filtered/split signals.

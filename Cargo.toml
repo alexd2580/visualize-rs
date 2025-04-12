@@ -4,6 +4,9 @@ version = "0.1.0"
 rust-version = "1.70"
 edition = "2021"
 
+[profile.release]
+debug = true
+
 [dependencies]
 ash = { version = "0.37.0", features = ["linked"] }
 ash-window = "0.12.0"

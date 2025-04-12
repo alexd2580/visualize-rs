@@ -75,7 +75,11 @@ impl<T: Copy> RingBuffer<T> {
         };
     }
 
-    pub fn last(&self) -> T {
+    pub fn oldest(&self) -> T {
+        self.data[self.write_index]
+    }
+
+    pub fn prev(&self) -> T {
         self.data[self.prev_index]
     }
 

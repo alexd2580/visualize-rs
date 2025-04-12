@@ -1,0 +1,65 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(push_constant, std140) uniform PushConstants {
+    layout(offset = 0) uint frame_index;
+    layout(offset = 4) float time;
+
+    layout(offset = 8) float bass_energy;
+    layout(offset = 12) bool is_beat;
+    layout(offset = 16) uint real_beats;
+
+    layout(offset = 20) float bpm_confidence;
+    layout(offset = 24) float bpm_period;
+    layout(offset = 28) int quarter_beat_index;
+    layout(offset = 32) float beat_fract;
+} constants;
+
+layout(binding = 0) uniform sampler2D canvas;
+layout(rgba32f, binding = 1) uniform image2D frame;
+layout(rgba32f, binding = 2) uniform image2D frame_prev;
+// layout(binding = 2) uniform sampler2D frame_prev;
+layout(rgba32f, binding = 3) uniform image2D present;
+
+void main() {
+    ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+
+    vec2 pixel_coords = vec2(ipixel_coords);
+    vec2 ndc = 2 * pixel_coords / vec2(iimage_size) - 1;
+
+    float beat_index = float(constants.real_beats);
+    vec2 shifted_pixel_coords = pixel_coords + 10.0 * vec2(
+        sin(beat_index), // + 0.293847987435 * constants.time),
+        cos(beat_index) // + 0.234567438598 * constants.time)
+    );
+    shifted_pixel_coords = pixel_coords - vec2(0.0, +10.0);
+
+    // Overlayed on top of previous canvas.
+    vec2 texture_coords = 0.5 * ndc + 0.5;
+
+    vec2 canvas_coords = texture_coords + vec2(0.1);
+    vec3 canvas_color = texture(canvas, canvas_coords).rgb;
+
+    vec2 prev_coords = texture_coords + vec2(110.0);
+    vec3 prev_color = imageLoad(frame_prev, ipixel_coords + ivec2(2)).rgb;
+
+    vec3 sum_color = canvas_color + prev_color;
+    sum_color = prev_color;
+    if (length(ndc) > 0.2 && length(ndc) < 0.3) {
+        sum_color += vec3(1.0, 0.0, 0.0);
+    }
+
+    imageStore(frame, ipixel_coords, vec4(sum_color, 1));
+    imageStore(present, ipixel_coords, vec4(sum_color, 1));
+
+
+    // vec3 add_color = fract(constants.frame_index * 0.1203948230 * vec3(float(ipixel_coords.x) / iimage_size.x, float(ipixel_coords.y) / iimage_size.y, 0));
+    //
+    // if (constants.frame_index % 60 < 60) {
+    //     imageStore(present, ipixel_coords, vec4(add_color, 1));
+    // } else {
+    //     imageStore(present, ipixel_coords, vec4(load_color, 1));
+    // }
+}

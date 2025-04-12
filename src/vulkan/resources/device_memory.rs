@@ -12,6 +12,15 @@ pub struct DeviceMemory {
     memory: vk::DeviceMemory,
 }
 
+impl std::fmt::Debug for DeviceMemory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceMemory")
+            .field("size", &self.size)
+            .field("memory", &self.memory)
+            .finish()
+    }
+}
+
 impl Deref for DeviceMemory {
     type Target = vk::DeviceMemory;
 

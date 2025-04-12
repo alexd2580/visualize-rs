@@ -21,7 +21,7 @@ use self::resources::{
     shader_module::ShaderModule, surface::Surface, surface_info::SurfaceInfo, swapchain::Swapchain,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value {
     F32(f32),
     U32(u32),
@@ -619,14 +619,8 @@ impl Vulkan {
             vk::ImageLayout::GENERAL,
         );
 
-        // Prepare available fields.
-        let mut push_constant_values = push_constant_values.clone();
-        push_constant_values.insert(
-            "frame_index".to_owned(),
-            Value::U32(u32::try_from(self.num_frames).unwrap()),
-        );
-
         for index in 0..self.shader_resources.len() {
+            println!("{:?}", self.shader_resources[index].shader_module.source_path);
             let write_descriptor_set = self.shader_resources[index].get_write_descriptor_set(
                 &self.available_images,
                 &self.available_buffers,

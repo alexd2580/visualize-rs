@@ -241,7 +241,7 @@ impl DelayedOutput {
         // Run the delayed output stream on the current default device.
         let output_stream = {
             let write_device = cpal.default_output_device()?;
-            DelayedOutput::init_output_stream(cpal, write_device, ring_buffer, 0.5)?
+            DelayedOutput::init_output_stream(cpal, write_device, ring_buffer, 0.2)?
         };
 
         let app_name = "visualize-rs";

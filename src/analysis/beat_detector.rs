@@ -11,7 +11,7 @@ use crate::{
     Args,
 };
 
-struct BandToFrameEnergy {
+pub struct BandToFrameEnergy {
     pub filter: BiquadBandPass,
     pub signal_energy: Energy,
     pub frame_energy: f32,
@@ -100,7 +100,7 @@ impl FrameEnergyStats {
 }
 
 pub struct BeatDetector {
-    bass_energy: BandToFrameEnergy,
+    pub bass_energy: BandToFrameEnergy,
     pub bass_stats: FrameEnergyStats,
     bass_buffer: RingBuffer<f32>,
 }

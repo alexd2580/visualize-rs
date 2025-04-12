@@ -48,7 +48,7 @@ impl StatisticalSummary {
 
 impl Filter for StatisticalSummary {
     fn sample(&mut self, x: f32) -> f32 {
-        let old_x = self.buffer.data[self.buffer.write_index];
+        let old_x = self.buffer.oldest();
         self.buffer.push(x);
         self.sum += x - old_x;
         self.avg = self.sum / self.size as f32;

@@ -12,11 +12,21 @@ pub struct RegularImage {
     image: vk::Image,
 }
 
+impl std::fmt::Debug for RegularImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegularImage")
+            .field("image", &self.image)
+            .finish()
+    }
+}
+
 #[allow(clippy::module_name_repetitions)]
+#[derive(Debug)]
 pub struct SwapchainImage {
     image: vk::Image,
 }
 
+#[derive(Debug)]
 pub enum Image {
     Regular(RegularImage),
     Swapchain(SwapchainImage),

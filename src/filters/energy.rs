@@ -20,7 +20,7 @@ impl Energy {
 
 impl Filter for Energy {
     fn sample(&mut self, x: f32) -> f32 {
-        let old_x = self.buffer.data[self.buffer.write_index];
+        let old_x = self.buffer.oldest();
         self.buffer.push(x);
 
         self.total_energy += x.powi(2) - old_x.powi(2);

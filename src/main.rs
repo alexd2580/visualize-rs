@@ -22,7 +22,7 @@ use winit::{
 #[derive(Parser, Debug, Clone)]
 pub struct Args {
     /// The shader module path
-    #[arg(short, long, num_args = 0.., default_value = "shaders/default.comp")]
+    #[arg(short, long, num_args = 0.., default_values = &["shaders/paint.comp", "shaders/present.comp"])]
     shader_paths: Vec<std::path::PathBuf>,
 
     /// The DFT size
@@ -71,17 +71,19 @@ fn run_main(args: &Args) -> error::VResult<()> {
         cell::Cell::new(analysis)
     };
 
+    // Notice Ctrl+C.
+    let run = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    ctrlc::set_handler({
+        let run = run.clone();
+        move || {
+            run.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    })
+    .expect("Error setting Ctrl-C handler");
+
     // Choose the mainloop.
     if args.headless {
         // Use a custom headless mainloop.
-        let run = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        ctrlc::set_handler({
-            let run = run.clone();
-            move || {
-                run.store(false, std::sync::atomic::Ordering::SeqCst);
-            }
-        })
-        .expect("Error setting Ctrl-C handler");
         while run.load(std::sync::atomic::Ordering::SeqCst) {
             analysis.as_mut_ref().on_tick(&audio.signal);
             utils::sleep_ms(16);
@@ -94,6 +96,10 @@ fn run_main(args: &Args) -> error::VResult<()> {
 
         // Use the visual winit-based mainloop.
         event_loop.run_return(|event, &_, control_flow| {
+            if !run.load(std::sync::atomic::Ordering::SeqCst) {
+                *control_flow = ControlFlow::ExitWithCode(1)
+            }
+
             *control_flow = match window::translate_event(event) {
                 // No other events, run analysis and render a frame.
                 window::Event::Tick => {
@@ -105,7 +111,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
                         Ok(()) => ControlFlow::Poll,
                         Err(err) => {
                             tracing::error!("Running vulkan tick failed: {err}");
-                            ControlFlow::ExitWithCode(1)
+                            ControlFlow::ExitWithCode(2)
                         }
                     }
                 }
@@ -115,6 +121,11 @@ fn run_main(args: &Args) -> error::VResult<()> {
 
                 window::Event::KeyPress(VirtualKeyCode::Escape | VirtualKeyCode::Q) => {
                     ControlFlow::ExitWithCode(0)
+                }
+
+                window::Event::KeyPress(VirtualKeyCode::R) => {
+                    analysis.as_mut_ref().quarter_beat_index = 0;
+                    ControlFlow::Poll
                 }
 
                 // Resize events can originate from both winit and vulkan.... Register the resize
