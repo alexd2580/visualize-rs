@@ -127,20 +127,6 @@ impl BpmTracker {
         (self.sample_to_phase(sample_index) / self.bpm.period).fract()
     }
 
-    /// Filter completely wrong beat deltas.
-    fn record_delta(&mut self, sample_index: u64) {
-        // Compute delta to previous beat.
-        let delta_s = (sample_index - self.last_beats.prev()) as f32 / self.sample_rate;
-
-        // Always record the last beat!
-        self.last_beats.push(sample_index);
-        // Ignore the delta if it doesn't fit our expectations.
-        if self.delta_fits_bpm_range(delta_s) {
-            self.last_delta_sum += delta_s - self.last_delta.oldest();
-            self.last_delta.push(delta_s);
-        }
-    }
-
     fn estimate_bpm(&mut self) {
         let bpm = (60.0 * (Self::DELTA_HISTORY_SIZE as f32) / self.last_delta_sum).round() as u32;
         self.bpm_candidate = Bpm::new(self.bpm_mode.sample(bpm));

@@ -6,6 +6,7 @@ pub struct LowPass {
 }
 
 impl LowPass {
+    #[allow(dead_code)]
     pub fn new(sample_rate: f32, cutoff_fq: usize) -> Self {
         let dt = 1.0 / sample_rate;
         let tau = 1.0 / (2.0 * std::f32::consts::PI * cutoff_fq as f32);

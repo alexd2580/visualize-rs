@@ -233,9 +233,9 @@ impl Visualizer {
         //     self.high_pass_gpu.mapped(0),
         // );
         //
-        // analysis
-        //     .signal_dft
-        //     .write_to_pointer(self.signal_dft_gpu.mapped(0));
+        analysis
+            .signal_dft
+            .write_to_pointer(self.signal_dft_gpu.mapped(0));
         // analysis
         //     .low_pass_dft
         //     .write_to_pointer(self.low_pass_dft_gpu.mapped(0));

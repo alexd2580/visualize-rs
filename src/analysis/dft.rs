@@ -5,16 +5,15 @@ use rustfft::num_complex::Complex;
 
 pub struct Dft {
     r2c: Arc<dyn realfft::RealToComplex<f32>>,
-    c2r: Arc<dyn realfft::ComplexToReal<f32>>,
-
-    hamming: Vec<f32>,
+    // c2r: Arc<dyn realfft::ComplexToReal<f32>>,
+    blackman_harris: Vec<f32>,
 
     pub input: Vec<f32>,
     scratch: Vec<Complex<f32>>,
     output: Vec<Complex<f32>>,
 
-    pub simple: Vec<f32>,
-    pub simple_old: Vec<f32>,
+    fq_decay: Vec<f32>,
+    fq_db: Vec<f32>,
 }
 
 impl Dft {
@@ -25,7 +24,7 @@ impl Dft {
     pub fn new(length: usize) -> Self {
         let mut real_planner = realfft::RealFftPlanner::<f32>::new();
         let r2c = real_planner.plan_fft_forward(length);
-        let c2r = real_planner.plan_fft_inverse(length);
+        // let c2r = real_planner.plan_fft_inverse(length);
 
         let input = r2c.make_input_vec();
         let scratch = r2c.make_scratch_vec();
@@ -35,24 +34,31 @@ impl Dft {
         // assert_eq!(scratch.len(), length);
         assert_eq!(output.len(), length / 2 + 1);
 
-        let mut hamming = vec![0f32; length];
-        for (index, val) in hamming.iter_mut().enumerate() {
-            *val = 0.54 - (0.46 * (2f32 * PI * (index as f32 / (length - 1) as f32)).cos());
-            // debug!("{}", *val);
+        let a0 = 0.35875;
+        let a1 = 0.48829;
+        let a2 = 0.14128;
+        let a3 = 0.01168;
+        let m = (length - 1) as f32;
+
+        let mut blackman_harris = vec![0f32; length];
+        for (index, val) in blackman_harris.iter_mut().enumerate() {
+            *val = a0 - a1 * (2.0 * PI * index as f32 / m).cos()
+                + a2 * (4.0 * PI * index as f32 / m).cos()
+                - a3 * (6.0 * PI * index as f32 / m).cos();
         }
 
-        let simple = vec![0.0; length / 2 + 1];
-        let simple_old = vec![0.0; length / 2 + 1];
+        let fq_decay = vec![0.0; length / 2 + 1];
+        let fq_db = vec![0.0; length / 2 + 1];
 
         Dft {
             r2c,
-            c2r,
-            hamming,
+            // c2r,
+            blackman_harris,
             input,
             scratch,
             output,
-            simple,
-            simple_old,
+            fq_decay,
+            fq_db,
         }
     }
 
@@ -64,15 +70,15 @@ impl Dft {
         &mut self.input
     }
 
-    pub fn write_input_to_pointer(&self, target: *mut c_void) {
-        unsafe {
-            let size = self.input.len();
-            *target.cast::<u32>() = u32::try_from(size).unwrap();
-            let target = target.add(mem::size_of::<i32>());
-
-            self.input.as_ptr().copy_to(target.cast(), size);
-        }
-    }
+    // pub fn write_input_to_pointer(&self, target: *mut c_void) {
+    //     unsafe {
+    //         let size = self.input.len();
+    //         *target.cast::<u32>() = u32::try_from(size).unwrap();
+    //         let target = target.add(mem::size_of::<i32>());
+    //
+    //         self.input.as_ptr().copy_to(target.cast(), size);
+    //     }
+    // }
 
     pub fn serialized_size(&self) -> usize {
         Dft::output_byte_size(self.size()) + mem::size_of::<i32>()
@@ -80,17 +86,17 @@ impl Dft {
 
     pub fn write_to_pointer(&self, target: *mut c_void) {
         unsafe {
-            let size = self.simple.len();
+            let size = self.fq_db.len();
             *target.cast::<u32>() = u32::try_from(size).unwrap();
             let target = target.add(mem::size_of::<i32>());
 
-            self.simple.as_ptr().copy_to(target.cast(), size);
+            self.fq_db.as_ptr().copy_to(target.cast(), size);
         }
     }
 
     pub fn run_transform(&mut self) {
         // Hamming window for smoother DFT results.
-        for (val, factor) in self.input.iter_mut().zip(self.hamming.iter()) {
+        for (val, factor) in self.input.iter_mut().zip(self.blackman_harris.iter()) {
             *val *= factor;
         }
 
@@ -98,10 +104,9 @@ impl Dft {
             .process_with_scratch(&mut self.input, &mut self.output, &mut self.scratch)
             .unwrap();
 
-        std::mem::swap(&mut self.simple, &mut self.simple_old);
-
-        for (&output, simple) in self.output.iter().zip(self.simple.iter_mut()) {
-            *simple = output.norm();
+        for i in 0..self.output.len() {
+            self.fq_decay[i] = 0.9 * self.fq_decay[i] + 0.1 * self.output[i].norm();
+            self.fq_db[i] = 20.0 * self.fq_decay[i].max(1e-6).log10();
         }
 
         // Experimentally determined factor, scales the majority of frequencies to [0..1].
@@ -112,17 +117,17 @@ impl Dft {
         // }
     }
 
-    fn run_inverse(&mut self) {
-        self.c2r
-            .process_with_scratch(&mut self.output, &mut self.input, &mut self.scratch)
-            .unwrap();
-    }
+    // fn run_inverse(&mut self) {
+    //     self.c2r
+    //         .process_with_scratch(&mut self.output, &mut self.input, &mut self.scratch)
+    //         .unwrap();
+    // }
 
-    pub fn autocorrelate(&mut self) {
-        self.run_transform();
-        for x in self.output.iter_mut() {
-            *x = *x * x.conj();
-        }
-        self.run_inverse();
-    }
+    // pub fn autocorrelate(&mut self) {
+    //     self.run_transform();
+    //     for x in self.output.iter_mut() {
+    //         *x = *x * x.conj();
+    //     }
+    //     self.run_inverse();
+    // }
 }

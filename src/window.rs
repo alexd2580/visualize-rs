@@ -1,4 +1,4 @@
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use ash::vk::SurfaceKHR as VkSurface;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};

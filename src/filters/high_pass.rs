@@ -9,6 +9,7 @@ pub struct HighPass {
 }
 
 impl HighPass {
+    #[allow(dead_code)]
     pub fn new(sample_rate: usize, cutoff_fq: usize) -> Self {
         let dt = 1.0 / sample_rate as f32;
         let tau = 1.0 / (2.0 * PI * cutoff_fq as f32);

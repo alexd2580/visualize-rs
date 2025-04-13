@@ -15,6 +15,7 @@ use super::{
 #[allow(clippy::module_name_repetitions)]
 pub struct MultiBufferUnit {
     pub buffer: Rc<Buffer>,
+    #[allow(dead_code)]
     pub memory: Rc<DeviceMemory>,
     pub mapping: Rc<MemoryMapping>,
 }

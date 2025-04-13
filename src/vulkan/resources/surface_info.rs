@@ -9,6 +9,7 @@ use super::{physical_device::PhysicalDevice, surface::Surface};
 #[derive(Debug)]
 pub struct SurfaceInfo {
     pub surface_format: vk::SurfaceFormatKHR,
+    #[allow(dead_code)]
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub desired_present_mode: vk::PresentModeKHR,
     pub desired_image_count: usize,

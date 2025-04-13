@@ -1,5 +1,8 @@
 use std::fmt::Display;
 
+// This is needed to prevent linter from complaining about
+// "intentionally ignored usage of derived `Debug`".
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum Cpal {
     SupportedStreamConfigs(cpal::SupportedStreamConfigsError),
@@ -25,10 +28,7 @@ impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Local(str) => write!(f, "{str}"),
-            Error::Vk(code) => {
-                write!(f, "{code}");
-                panic!("RIP")
-            }
+            Error::Vk(code) => write!(f, "{code}"),
             Error::Os(error) => write!(f, "OS Error\n{error}"),
             Error::Io(error) => write!(f, "IO Error\n{error}"),
             Error::Parse(glsl::parser::ParseError { info }) => {

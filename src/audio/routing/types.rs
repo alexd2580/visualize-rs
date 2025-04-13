@@ -2,6 +2,7 @@ use std::clone::Clone;
 
 use libpulse_binding::{context::introspect, proplist::Proplist};
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ServerInfo {
     pub user_name: Option<String>,
@@ -119,6 +120,7 @@ impl<'a> From<&'a introspect::SourceInfo<'a>> for DeviceInfo {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ApplicationInfo {
     pub index: u32,

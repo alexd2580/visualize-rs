@@ -18,38 +18,66 @@ layout(push_constant, std140) uniform PushConstants {
 
 layout(binding = 0) uniform sampler2D canvas;
 layout(rgba32f, binding = 1) uniform image2D frame;
-layout(rgba32f, binding = 2) uniform image2D frame_prev;
-// layout(binding = 2) uniform sampler2D frame_prev;
+// layout(rgba32f, binding = 2) uniform image2D frame_prev;
+layout(binding = 2) uniform sampler2D frame_prev;
 layout(rgba32f, binding = 3) uniform image2D present;
+
+mat2 rotation_2d(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat2(
+        c, -s,
+        s,  c
+    );
+}
+
+vec2 ndc_to_tex(vec2 ndc) {
+    return 0.5 * ndc + 0.5;
+}
 
 void main() {
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
 
-    vec2 pixel_coords = vec2(ipixel_coords);
-    vec2 ndc = 2 * pixel_coords / vec2(iimage_size) - 1;
+    // +0.5 because querying the texture using sampler we get floating pixel coordinates.
+    vec2 pixel_coords = vec2(ipixel_coords) + 0.5;
+    vec2 ndc = 2.0 * pixel_coords / vec2(iimage_size) - 1.0;
 
-    float beat_index = float(constants.real_beats);
-    vec2 shifted_pixel_coords = pixel_coords + 10.0 * vec2(
-        sin(beat_index), // + 0.293847987435 * constants.time),
-        cos(beat_index) // + 0.234567438598 * constants.time)
-    );
-    shifted_pixel_coords = pixel_coords - vec2(0.0, +10.0);
+    // float beat_index = float(constants.real_beats);
+    // vec2 shifted_pixel_coords = pixel_coords + 10.0 * vec2(
+    //     sin(beat_index), // + 0.293847987435 * constants.time),
+    //     cos(beat_index) // + 0.234567438598 * constants.time)
+    // );
+    // shifted_pixel_coords = pixel_coords - vec2(0.0, +10.0);
 
     // Overlayed on top of previous canvas.
-    vec2 texture_coords = 0.5 * ndc + 0.5;
+    mat2 rotate_canvas = rotation_2d(0.5 * constants.bass_energy);
+    vec2 rotated = rotate_canvas * ndc;
+    vec2 scale = 1.0 - vec2(constants.bass_energy);
+    vec2 canvas_coords = rotated * scale;
+    // canvas_coords = 0.5 * ndc + 0.5;
+    // vec3 canvas_color = texture(canvas, ndc_to_tex(canvas_coords)).rgb;
+    vec3 canvas_color = texture(canvas, ndc_to_tex(ndc)).rgb;
 
-    vec2 canvas_coords = texture_coords + vec2(0.1);
-    vec3 canvas_color = texture(canvas, canvas_coords).rgb;
+    float bar = float(constants.quarter_beat_index >> 4);
+    vec2 flight_direction = vec2(
+        sin(bar + 0.293847987435 * constants.time),
+        cos(bar + 0.234567438598 * constants.time)
+    );
+    vec2 zoom = 1.0 + 0.01 * vec2(
+        sin(0.293847987435 * constants.time),
+        cos(0.234567438598 * constants.time)
+    );
+    vec2 prev_coords = zoom * ndc + 0.01 * flight_direction;
+    vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb;
+    // vec3 prev_color = imageLoad(frame_prev, ipixel_coords + 1).rgb;
+    vec3 sum_color = canvas_color; // + 0.98 * prev_color;
+    // sum_color = prev_color;
+    // if (length(ndc) > 0.2 && length(ndc) < 0.3) {
+    //     sum_color += vec3(1.0, 0.0, 0.0);
+    // }
 
-    vec2 prev_coords = texture_coords + vec2(110.0);
-    vec3 prev_color = imageLoad(frame_prev, ipixel_coords + ivec2(2)).rgb;
-
-    vec3 sum_color = canvas_color + prev_color;
-    sum_color = prev_color;
-    if (length(ndc) > 0.2 && length(ndc) < 0.3) {
-        sum_color += vec3(1.0, 0.0, 0.0);
-    }
+    vec3 test = vec3(prev_color.x > sum_color.x, prev_color.y > sum_color.y, prev_color.z > sum_color.z);
 
     imageStore(frame, ipixel_coords, vec4(sum_color, 1));
     imageStore(present, ipixel_coords, vec4(sum_color, 1));

@@ -7,7 +7,6 @@ mod error;
 mod filters;
 mod ring_buffer;
 mod thread_shared;
-mod timer;
 mod utils;
 mod visualizer;
 mod vulkan;

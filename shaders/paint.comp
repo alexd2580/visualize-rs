@@ -18,9 +18,14 @@ layout(push_constant, std140) uniform PushConstants {
 
 layout(rgba32f, binding = 0) uniform image2D canvas;
 
-// layout(binding = 1) buffer Dft {
-//     float data[];
-// } dft;
+layout(binding = 1) buffer Dft {
+    int size;
+    float data[];
+} signal_dft;
+
+vec2 ndc_to_tex(vec2 ndc) {
+    return 0.5 * ndc + 0.5;
+}
 
 float len2(vec2 v) {
     return v.x * v.x + v.y * v.y;
@@ -76,12 +81,53 @@ vec3 bar_grid(vec2 xy) {
     return grid(xy, ivec2(8, 10), ivec2(i, 9)) * vec3(0.0, 0.72, 1.0);
 }
 
+vec3 dft(vec2 xy) {
+    vec2 tex = ndc_to_tex(xy * 2.0);
+    float x = tex.x - 0.5;
+
+    float dft_index_f = pow(x, 2) * signal_dft.size;
+    int dft_index = int(dft_index_f);
+
+    if (abs(x) < 0.01) {
+        return vec3(0.0, 0.0, 1.0);
+    }
+
+    if (abs(x - 1.0) < 0.01) {
+        return vec3(1.0, 0.0, 0.0);
+    }
+
+    if (abs(x + 1.0) < 0.01) {
+        return vec3(0.0, 1.0, 0.0);
+    }
+
+    float inv_y = 0.5 - tex.y;
+    if (abs(inv_y) < 0.01) {
+        return vec3(0.0, 0.0, 1.0);
+    }
+
+    if (abs(inv_y - 1.0) < 0.01) {
+        return vec3(1.0, 0.0, 0.0);
+    }
+
+    if (abs(inv_y + 1.0) < 0.01) {
+        return vec3(0.0, 1.0, 0.0);
+    }
+
+    float min_db = -10.0;
+    float db_range = 100.0;
+    float db = (signal_dft.data[dft_index] - min_db) / db_range;
+
+    float value = db > inv_y ? 1.0 : 0.0;
+
+    return vec3(value);
+}
+
 void main() {
 
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
 
-    vec2 pixel_coords = vec2(ipixel_coords);
+    vec2 pixel_coords = vec2(ipixel_coords) + 0.5;
     vec2 ndc = 2 * pixel_coords / vec2(iimage_size) - 1;
 
     float average_size = 0.5 * float(iimage_size.x + iimage_size.y);
@@ -90,13 +136,19 @@ void main() {
     // Circle in center.
     float bass_pump_color_index = 0.25 * constants.time / constants.bpm_period;
     vec3 bass_pump_color = neon_color(bass_pump_color_index);
-    vec3 bass_pump = circle(ndc_aspect, vec2(0.0), 2.0 * constants.bass_energy + 0.2) * bass_pump_color;
+    float radius = 1.5 * constants.bass_energy + 0.1;
+    vec3 bass_pump = circle(ndc_aspect, vec2(0.0), radius) * bass_pump_color;
 
     // Ticker displays.
-    vec3 beat_display = quad_grid(ndc) + beat_grid(ndc) + bar_grid(ndc);
+    vec3 beat_display = quad_grid(ndc_aspect * 1.5) + beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
+
+    // DFT
+    vec3 dft_color = dft(ndc_aspect * 1.5);
 
     // Current image.
     vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
+    color = dft_color;
+
 
     // float beat_index = float(constants.real_beats);
     // vec2 shifted_pixel_coords = pixel_coords + 10.0 * vec2(
