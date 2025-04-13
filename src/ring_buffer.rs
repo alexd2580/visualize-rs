@@ -92,15 +92,31 @@ impl<T: Copy> RingBuffer<T> {
         self.size * mem::size_of::<T>() + 2 * mem::size_of::<i32>()
     }
 
-    pub fn write_to_buffer(&self, buffer: &mut [T]) {
-        let (start, end) = self.unwrap();
-        let size = buffer.len();
+    pub fn write_to_buffer(&self, offset: isize, buffer: &mut [T]) {
+        let (init, tail) = self.unwrap();
 
-        let from_end = end.len().min(size);
-        let from_start = size - from_end;
+        let wanted_size = buffer.len();
+        let init_size = init.len();
 
-        buffer[..from_start].copy_from_slice(&start[start.len() - from_start..]);
-        buffer[from_start..].copy_from_slice(&end[end.len() - from_end..]);
+        let self_isize = self.size as isize;
+        assert!(-self_isize <= offset && offset <= self_isize);
+
+        let start = if offset < 0 {
+            offset + self.size as isize
+        } else {
+            offset
+        } as usize;
+        let end = start + wanted_size;
+
+        assert!(end <= self.size);
+
+        let from_init = init_size.saturating_sub(start).min(wanted_size);
+        let init_start = init_size.min(start);
+        buffer[..from_init].copy_from_slice(&init[init_start..init_start + from_init]);
+
+        let from_tail = wanted_size - from_init;
+        let tail_start = start.saturating_sub(init_size);
+        buffer[from_init..].copy_from_slice(&tail[tail_start..tail_start + from_tail]);
     }
 
     /// Write the ringbuffer to the pointer, posting its size and write index first and then

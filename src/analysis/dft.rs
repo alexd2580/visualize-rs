@@ -105,7 +105,7 @@ impl Dft {
             .unwrap();
 
         for i in 0..self.output.len() {
-            self.fq_decay[i] = 0.9 * self.fq_decay[i] + 0.1 * self.output[i].norm();
+            self.fq_decay[i] = self.output[i].norm().max(0.9 * self.fq_decay[i]);
             self.fq_db[i] = 20.0 * self.fq_decay[i].max(1e-6).log10();
         }
 

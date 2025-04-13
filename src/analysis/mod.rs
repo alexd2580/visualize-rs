@@ -90,7 +90,7 @@ impl Analysis {
             tick_start_index: 0,
             tick_end_index: 0,
 
-            normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
+            normalizer: MaxDecayNormalizer::new(1.0, 0.05),
             signal: RingBuffer::new(audio_buffer_size),
             signal_dft: Dft::new(dft_size),
 
@@ -202,9 +202,24 @@ impl Analysis {
         }
 
         // Run DFTs on filtered/split signals.
+        let dft_size = self.signal_dft.size();
         let dft_vec = self.signal_dft.get_input_vec();
         // TODO use signal or an analysis copy?
-        signal.write_to_buffer(dft_vec);
+        let last_multiple_of_dft = self.sample_index & !0b11111111;
+        let skip_end = self.sample_index - last_multiple_of_dft;
+        let offset = -(skip_end as isize) - (dft_size as isize);
+
+        if (self.sample_index as f32 / 44100.0).rem_euclid(10.0) >= 5.0 {
+            signal.write_to_buffer(offset, dft_vec);
+            println!(
+                "good {}",
+                (self.sample_index as isize + offset) as f32 / 256.0
+            );
+        } else {
+            signal.write_to_buffer(-(dft_size as isize), dft_vec);
+            println!("bad");
+        }
+
         self.signal_dft.run_transform();
 
         // let low_pass_vec = self.low_pass_dft.get_input_vec();
