@@ -68,12 +68,12 @@ float circle(vec2 xy, vec2 pos, float radius) {
 
 vec3 quad_grid(vec2 xy) {
     int i = constants.quarter_beat_index & 3;
-    return grid(xy, ivec2(4, 5), ivec2(i, 2)) * vec3(0.22, 1.0, 0.07);
+    return grid(xy, ivec2(4, 5), ivec2(i, 0)) * vec3(0.22, 1.0, 0.07);
 }
 
 vec3 beat_grid(vec2 xy) {
     int i = (constants.quarter_beat_index & 12) >> 2;
-    return grid(xy, ivec2(4, 5), ivec2(i, 1)) * vec3(1.0, 0.35, 0.0);
+    return grid(xy, ivec2(4, 5), ivec2(i, 4)) * vec3(1.0, 0.35, 0.0);
 }
 
 vec3 bar_grid(vec2 xy) {
@@ -88,6 +88,10 @@ vec3 dft(vec2 xy) {
     float dft_index_f = pow(x, 2) * signal_dft.size;
     int dft_index = int(dft_index_f);
 
+    if (abs(x) > 1.0) {
+        return vec3(0.0);
+    }
+
     if (abs(x) < 0.01) {
         return vec3(0.0, 0.0, 1.0);
     }
@@ -100,7 +104,7 @@ vec3 dft(vec2 xy) {
         return vec3(0.0, 1.0, 0.0);
     }
 
-    float inv_y = 0.5 - tex.y;
+    float inv_y = abs(0.5 - tex.y);
     if (abs(inv_y) < 0.01) {
         return vec3(0.0, 0.0, 1.0);
     }
@@ -113,11 +117,11 @@ vec3 dft(vec2 xy) {
         return vec3(0.0, 1.0, 0.0);
     }
 
-    float min_db = -10.0;
-    float db_range = 100.0;
+    float min_db = -20.0;
+    float db_range = 120.0;
     float db = (signal_dft.data[dft_index] - min_db) / db_range;
 
-    float value = db > inv_y ? 1.0 : 0.0;
+    vec3 value = db > inv_y ? neon_color(db + sin(0.001 * constants.time * inv_y)) : vec3(0.0);
 
     return vec3(value);
 }

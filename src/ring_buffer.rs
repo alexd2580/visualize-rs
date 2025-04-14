@@ -1,4 +1,4 @@
-use std::{ffi::c_void, mem};
+use std::{ffi::c_void, fmt::Debug, mem};
 
 pub struct RingBuffer<T> {
     pub size: usize,
@@ -45,26 +45,26 @@ impl<T: Copy> From<Vec<T>> for RingBuffer<T> {
     }
 }
 
-impl<T: Copy> RingBuffer<T> {
+impl<T: Copy + Debug> RingBuffer<T> {
     fn unwrap(&self) -> (&[T], &[T]) {
         (
-            &self.data.as_slice()[self.write_index..],
-            &self.data.as_slice()[..self.write_index],
+            &self.data[self.write_index..],
+            &self.data[..self.write_index],
         )
     }
 
-    pub fn offset_index(&self, pos: usize, neg: usize) -> usize {
-        let idx = self.write_index + pos + self.size - neg;
-        if idx >= self.size {
-            idx % self.size
-        } else {
-            idx
-        }
-    }
-
-    pub fn at_offset(&self, pos: usize, neg: usize) -> &T {
-        &self.data[self.offset_index(pos, neg)]
-    }
+    // pub fn offset_index(&self, pos: usize, neg: usize) -> usize {
+    //     let idx = self.write_index + pos + self.size - neg;
+    //     if idx >= self.size {
+    //         idx % self.size
+    //     } else {
+    //         idx
+    //     }
+    // }
+    //
+    // pub fn at_offset(&self, pos: usize, neg: usize) -> &T {
+    //     &self.data[self.offset_index(pos, neg)]
+    // }
 
     pub fn advance(&mut self) {
         self.prev_index = self.write_index;
@@ -92,31 +92,25 @@ impl<T: Copy> RingBuffer<T> {
         self.size * mem::size_of::<T>() + 2 * mem::size_of::<i32>()
     }
 
-    pub fn write_to_buffer(&self, offset: isize, buffer: &mut [T]) {
-        let (init, tail) = self.unwrap();
+    // `neg_offset` gives the index from end at which to start copying.
+    pub fn write_to_buffer(&self, neg_offset: usize, buffer: &mut [T]) {
+        let count = buffer.len();
+        let start_index = self.size - neg_offset;
 
-        let wanted_size = buffer.len();
-        let init_size = init.len();
+        let (stale, fresh) = self.unwrap();
+        let stale_len = stale.len();
 
-        let self_isize = self.size as isize;
-        assert!(-self_isize <= offset && offset <= self_isize);
+        if start_index < stale_len {
+            let stale = &stale[start_index..];
+            let from_stale = stale.len().min(count);
+            buffer[..from_stale].copy_from_slice(&stale[..from_stale]);
 
-        let start = if offset < 0 {
-            offset + self.size as isize
+            let from_fresh = count - from_stale;
+            buffer[from_stale..].copy_from_slice(&fresh[..from_fresh]);
         } else {
-            offset
-        } as usize;
-        let end = start + wanted_size;
-
-        assert!(end <= self.size);
-
-        let from_init = init_size.saturating_sub(start).min(wanted_size);
-        let init_start = init_size.min(start);
-        buffer[..from_init].copy_from_slice(&init[init_start..init_start + from_init]);
-
-        let from_tail = wanted_size - from_init;
-        let tail_start = start.saturating_sub(init_size);
-        buffer[from_init..].copy_from_slice(&tail[tail_start..tail_start + from_tail]);
+            let start_index = start_index - stale_len;
+            buffer.copy_from_slice(&fresh[start_index..start_index + count]);
+        }
     }
 
     /// Write the ringbuffer to the pointer, posting its size and write index first and then

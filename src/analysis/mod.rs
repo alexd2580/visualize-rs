@@ -90,7 +90,7 @@ impl Analysis {
             tick_start_index: 0,
             tick_end_index: 0,
 
-            normalizer: MaxDecayNormalizer::new(1.0, 0.05),
+            normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
             signal: RingBuffer::new(audio_buffer_size),
             signal_dft: Dft::new(dft_size),
 
@@ -116,14 +116,14 @@ impl Analysis {
     /// be written (end of data to read).
     fn update_slice_indices(&mut self, signal: &RingBuffer<f32>, delta: f32) {
         // Requiring self.signal and signal to be of same size.
-        let read_index = self.signal.write_index;
-        let write_index = signal.write_index;
+        let index_first_new = self.signal.write_index;
+        let index_last_new = signal.write_index;
 
         // Total available samples - samples that haven't been copied from `signal` to `self.signal`.
-        let available_samples = if write_index < read_index {
-            write_index + self.buf_size - read_index
+        let available_samples = if index_last_new < index_first_new {
+            index_last_new + self.buf_size - index_first_new
         } else {
-            write_index - read_index
+            index_last_new - index_first_new
         };
 
         // I want to consume this much!
@@ -136,8 +136,8 @@ impl Analysis {
             consume_samples = available_samples;
         }
 
-        self.tick_start_index = read_index;
-        self.tick_end_index = (read_index + consume_samples) % self.buf_size;
+        self.tick_start_index = index_first_new;
+        self.tick_end_index = (index_first_new + consume_samples) % self.buf_size;
     }
 
     fn on_pcm_sample(&mut self, x: f32) {
@@ -202,24 +202,10 @@ impl Analysis {
         }
 
         // Run DFTs on filtered/split signals.
-        let dft_size = self.signal_dft.size();
+        let samples_since_last_multiple_of_dft = self.sample_index & 0b11111111;
+        let offset_from_end = samples_since_last_multiple_of_dft as usize + self.signal_dft.size();
         let dft_vec = self.signal_dft.get_input_vec();
-        // TODO use signal or an analysis copy?
-        let last_multiple_of_dft = self.sample_index & !0b11111111;
-        let skip_end = self.sample_index - last_multiple_of_dft;
-        let offset = -(skip_end as isize) - (dft_size as isize);
-
-        if (self.sample_index as f32 / 44100.0).rem_euclid(10.0) >= 5.0 {
-            signal.write_to_buffer(offset, dft_vec);
-            println!(
-                "good {}",
-                (self.sample_index as isize + offset) as f32 / 256.0
-            );
-        } else {
-            signal.write_to_buffer(-(dft_size as isize), dft_vec);
-            println!("bad");
-        }
-
+        self.signal.write_to_buffer(offset_from_end, dft_vec);
         self.signal_dft.run_transform();
 
         // let low_pass_vec = self.low_pass_dft.get_input_vec();

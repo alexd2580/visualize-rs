@@ -29,7 +29,7 @@ pub struct Args {
     dft_size: usize,
 
     /// The audio buffer size
-    #[arg(short, long, default_value = "4")]
+    #[arg(short, long, default_value = "5")]
     audio_buffer_sec: f32,
 
     /// Enable vsync
