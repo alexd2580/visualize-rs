@@ -4,6 +4,8 @@ Rewrite of [oscilloscope-visualizer](https://github.com/alexd2580/oscilloscope-v
 
 ![current snapshot](./snapshot.png)
 
+![black dft](./black-dft.png)
+
 ### Beat/BPM Tracking
 
 Huge focus on BPM tracking for reliable and rhytmical effects.
@@ -98,7 +100,7 @@ especially noticeable. To improve this you can go "passthrough" mode, which:
 - [x] ~Check that glslc is present.... use native impl? does it exist?~ shaderc-rs! ~?~
 - [ ] Check that pactl and pulsecmd are present before allowing "passthrough" mode
 - [ ] Better delay control
-- [ ] Revise BPM and beat detection.
+- [x] Revise BPM and beat detection.
 - [ ] Better beat-effects. Check last_beat and next_beat
 - [ ] Exponentialize dft index on CPU side once?
 - [ ] use host_cached memory and flushes instead of _hoping_ that coherent writes work fine
