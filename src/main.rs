@@ -122,11 +122,6 @@ fn run_main(args: &Args) -> error::VResult<()> {
                     ControlFlow::ExitWithCode(0)
                 }
 
-                window::Event::KeyPress(VirtualKeyCode::R) => {
-                    analysis.as_mut_ref().quarter_beat_index = 0;
-                    ControlFlow::Poll
-                }
-
                 // Resize events can originate from both winit and vulkan.... Register the resize
                 // event and wait until no resize events were recieved for X seconds.
                 window::Event::Resize(width, height) => {

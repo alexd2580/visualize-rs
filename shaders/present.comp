@@ -12,7 +12,7 @@ layout(push_constant, std140) uniform PushConstants {
 
     layout(offset = 20) float bpm_confidence;
     layout(offset = 24) float bpm_period;
-    layout(offset = 28) int quarter_beat_index;
+    layout(offset = 28) int beat_index;
     layout(offset = 32) float beat_fract;
 } constants;
 
@@ -48,24 +48,22 @@ mat2 rotation_2d(float angle) {
     );
 }
 
-void main() {
-    ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
-
-    vec2 pixel_coords = vec2(ipixel_coords) + 0.5;
-    vec2 ndc = 2.0 * pixel_coords / vec2(iimage_size) - 1.0;
-
+vec3 load_canvas(vec2 ndc, out float mask) {
     // Overlayed on top of previous canvas.
     mat2 rotate_canvas = rotation_2d(sin(constants.time) * constants.bass_energy);
     vec2 rotated = rotate_canvas * ndc;
     vec2 scale = 1.0 - vec2(constants.bass_energy);
     vec2 canvas_coords = rotated * scale;
-    // canvas_coords = 0.5 * ndc + 0.5;
-    vec3 canvas_color = texture(canvas, ndc_to_tex(canvas_coords)).rgb;
-    vec3 canvas_color_larger = texture(canvas, ndc_to_tex(canvas_coords) / 0.01).rgb;
-    // vec3 canvas_color = texture(canvas, ndc_to_tex(ndc)).rgb;
 
-    float bar = float(constants.quarter_beat_index >> 4);
+    vec3 canvas_color = texture(canvas, ndc_to_tex(canvas_coords)).rgb;
+    vec3 canvas_color_b = texture(canvas, ndc_to_tex(vec2(0.9, 0.8) * canvas_coords)).rgb;
+
+    mask = min(dot(canvas_color_b, canvas_color_b), 1.0);
+    return canvas_color;
+}
+
+vec3 load_prev_frame(vec2 ndc) {
+    float bar = float(constants.beat_index >> 2);
     vec2 flight_direction = vec2(
         sin(bar + 0.293847987435 * constants.time),
         cos(bar + 0.234567438598 * constants.time)
@@ -75,18 +73,31 @@ void main() {
         cos(0.234567438598 * constants.time)
     );
     vec2 prev_coords = zoom * ndc + 0.01 * flight_direction;
-    vec3 prev_color = texture(frame_prev, ndc_to_tex(ndc)).rgb; // prev_coords
+    vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb; // prev_coords
 
-    float len_canvas = length(canvas_color);
-    vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;
-    vec3 sum_color2 = len_canvas > 0.5 ? canvas_color : 0.99 * prev_color;
-    // sum_color = prev_color;
-    // if (length(ndc) > 0.2 && length(ndc) < 0.3) {
-    //     sum_color += vec3(1.0, 0.0, 0.0);
-    // }
+    return prev_color;
+}
 
-    imageStore(frame, ipixel_coords, vec4(sum_color2, 1));
-    imageStore(present, ipixel_coords, vec4(sum_color, 1));
+void main() {
+    ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+
+    vec2 pixel_coords = vec2(ipixel_coords) + 0.0;
+    vec2 ndc = 2.0 * pixel_coords / vec2(iimage_size) - 1.0;
+
+    float canvas_mask;
+    vec3 canvas_color = load_canvas(ndc, canvas_mask);
+    vec3 frame_color = load_prev_frame(ndc);
+
+
+    vec3 next_frame = canvas_color + 0.98 * frame_color;
+    vec3 next_present = (1.0 - canvas_mask) * frame_color + canvas_color;
+
+    // vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;
+    // vec3 sum_color2 = len_canvas > 0.5 ? canvas_color : 0.99 * prev_color;
+
+    imageStore(frame, ipixel_coords, vec4(next_frame, 1));
+    imageStore(present, ipixel_coords, vec4(next_present, 1));
 
 
     // vec3 add_color = fract(constants.frame_index * 0.1203948230 * vec3(float(ipixel_coords.x) / iimage_size.x, float(ipixel_coords.y) / iimage_size.y, 0));

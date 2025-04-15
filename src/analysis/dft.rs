@@ -14,6 +14,9 @@ pub struct Dft {
 
     fq_decay: Vec<f32>,
     fq_db: Vec<f32>,
+
+    num_bins: usize,
+    bin_indices: Vec<(usize, usize)>,
 }
 
 impl Dft {
@@ -21,7 +24,7 @@ impl Dft {
         (input_size / 2 + 1) * mem::size_of::<f32>()
     }
 
-    pub fn new(length: usize) -> Self {
+    pub fn new(length: usize, sample_rate: f32) -> Self {
         let mut real_planner = realfft::RealFftPlanner::<f32>::new();
         let r2c = real_planner.plan_fft_forward(length);
         // let c2r = real_planner.plan_fft_inverse(length);
@@ -50,6 +53,28 @@ impl Dft {
         let fq_decay = vec![0.0; length / 2 + 1];
         let fq_db = vec![0.0; length / 2 + 1];
 
+        let num_bins = 60;
+        let bin_fq_step = sample_rate / length as f32;
+
+        let min_fq = 20.0f32;
+        let max_fq = 20_000.0;
+
+        let exp_base = max_fq / min_fq;
+        let exp_step = 1.0 / num_bins as f32;
+
+        let bin_borders = (0..num_bins + 1)
+            .map(|bin_index| {
+                let exp_fq = min_fq * exp_base.powf(bin_index as f32 * exp_step);
+                exp_fq / bin_fq_step
+            })
+            .collect::<Vec<_>>();
+        let bin_indices = bin_borders
+            .iter()
+            .take(num_bins)
+            .zip(bin_borders.iter().skip(1))
+            .map(|(i1, i2)| (i1.floor() as usize, i2.ceil() as usize))
+            .collect();
+
         Dft {
             r2c,
             // c2r,
@@ -59,6 +84,8 @@ impl Dft {
             output,
             fq_decay,
             fq_db,
+            num_bins,
+            bin_indices,
         }
     }
 
@@ -94,6 +121,23 @@ impl Dft {
         }
     }
 
+    pub fn log_bin_serialized_size(&self) -> usize {
+        mem::size_of::<i32>() + self.num_bins * mem::size_of::<f32>()
+    }
+
+    pub fn write_log_bins_to_pointer(&self, target: *mut c_void) {
+        unsafe {
+            *target.cast::<u32>() = u32::try_from(self.num_bins).unwrap();
+            let target = target.add(mem::size_of::<i32>());
+            let target = target.cast::<f32>();
+
+            for (index, (start, end)) in self.bin_indices.iter().enumerate() {
+                let slice = &self.fq_db[*start..*end + 1];
+                *target.add(index) = slice.iter().sum::<f32>() / slice.len() as f32;
+            }
+        }
+    }
+
     pub fn run_transform(&mut self) {
         // Hamming window for smoother DFT results.
         for (val, factor) in self.input.iter_mut().zip(self.blackman_harris.iter()) {
@@ -106,7 +150,7 @@ impl Dft {
 
         for i in 0..self.output.len() {
             let old = self.fq_decay[i];
-            self.fq_decay[i] = (0.1 * self.output[i].norm() + 0.9 * old).max(0.8 * old);
+            self.fq_decay[i] = (0.2 * self.output[i].norm() + 0.8 * old); // .max(0.8 * old);
             self.fq_db[i] = 20.0 * self.fq_decay[i].max(1e-6).log10();
         }
 

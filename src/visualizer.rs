@@ -148,7 +148,7 @@ impl Visualizer {
         //     vulkan.new_multi_buffer("high_pass", size, Some(1))?
         // };
         let signal_dft_gpu = {
-            let size = analysis.signal_dft.serialized_size();
+            let size = analysis.signal_dft.log_bin_serialized_size();
             vulkan.new_multi_buffer("signal_dft", size, Some(1))?
         };
         // let low_pass_dft_gpu = {
@@ -235,7 +235,7 @@ impl Visualizer {
         //
         analysis
             .signal_dft
-            .write_to_pointer(self.signal_dft_gpu.mapped(0));
+            .write_log_bins_to_pointer(self.signal_dft_gpu.mapped(0));
         // analysis
         //     .low_pass_dft
         //     .write_to_pointer(self.low_pass_dft_gpu.mapped(0));
@@ -256,7 +256,7 @@ impl Visualizer {
         let confidence = analysis.bpm_tracker.bpm_confidence();
         push_constants.f32("bpm_confidence", confidence);
         push_constants.f32("bpm_period", analysis.bpm_tracker.bpm.period);
-        push_constants.u32("quarter_beat_index", analysis.quarter_beat_index);
+        push_constants.u32("beat_index", analysis.fake_beats);
         push_constants.f32("beat_fract", analysis.beat_fract);
 
         if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) =

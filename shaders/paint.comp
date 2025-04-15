@@ -12,7 +12,7 @@ layout(push_constant, std140) uniform PushConstants {
 
     layout(offset = 20) float bpm_confidence;
     layout(offset = 24) float bpm_period;
-    layout(offset = 28) int quarter_beat_index;
+    layout(offset = 28) int beat_index;
     layout(offset = 32) float beat_fract;
 } constants;
 
@@ -28,7 +28,16 @@ vec2 ndc_to_tex(vec2 ndc) {
 }
 
 float len2(vec2 v) {
-    return v.x * v.x + v.y * v.y;
+    return dot(v, v);
+}
+
+mat2 rotation_2d(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat2(
+        c, -s,
+        s,  c
+    );
 }
 
 vec3 neon_color(float time) {
@@ -67,25 +76,40 @@ float circle(vec2 xy, vec2 pos, float radius) {
 }
 
 vec3 quad_grid(vec2 xy) {
-    int i = constants.quarter_beat_index & 3;
+    int i = int(floor(constants.beat_fract / 0.25));
     return grid(xy, ivec2(4, 5), ivec2(i, 0)) * vec3(0.22, 1.0, 0.07);
 }
 
 vec3 beat_grid(vec2 xy) {
-    int i = (constants.quarter_beat_index & 12) >> 2;
+    int i = constants.beat_index & 3;
     return grid(xy, ivec2(4, 5), ivec2(i, 4)) * vec3(1.0, 0.35, 0.0);
 }
 
 vec3 bar_grid(vec2 xy) {
-    int i = (constants.quarter_beat_index & 112) >> 4;
+    int i = (constants.beat_index >> 2) & 7;
     return grid(xy, ivec2(8, 10), ivec2(i, 9)) * vec3(0.0, 0.72, 1.0);
+}
+
+vec3 beat_bouncer(vec2 xy) {
+    mat2 rot = rotation_2d(constants.time);
+
+    int beat_index = constants.beat_index;
+    vec2 pos = vec2(
+        (beat_index & 0x1) != 0 ? constants.beat_fract - 0.5 : 0.5 - constants.beat_fract,
+        0.0
+    ) * 2;
+
+    vec2 d = (rot * xy) - pos;
+    float sdf = len2(d);
+
+    return clamp(1.0 - 500.0 * sdf, 0.0, 1.0) * vec3((beat_index & 1) == 0, (beat_index & 2) == 0, (beat_index & 4) == 0);
 }
 
 vec3 dft(vec2 xy) {
     vec2 tex = ndc_to_tex(xy * 2.0);
     float x = tex.x - 0.5;
 
-    float dft_index_f = pow(x, 2) * signal_dft.size;
+    float dft_index_f = abs(x) * signal_dft.size;
     int dft_index = int(dft_index_f);
 
     if (abs(x) > 1.0) {
@@ -145,13 +169,14 @@ void main() {
 
     // Ticker displays.
     vec3 beat_display = quad_grid(ndc_aspect * 1.5) + beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
+    vec3 bouncer = beat_bouncer(ndc_aspect);
 
     // DFT
-    vec3 dft_color = dft(ndc_aspect * 1.5);
+    vec3 dft_color = dft(ndc_aspect * 2.0);
 
     // Current image.
     vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
-    color = dft_color;
+    color = dft_color + bouncer;
 
 
     // float beat_index = float(constants.real_beats);

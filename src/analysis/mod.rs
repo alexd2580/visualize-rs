@@ -42,8 +42,8 @@ pub struct Analysis {
     pub beat_in_tick: bool,
     pub real_beats: u32,
 
+    pub fake_beats: u32,
     pub beat_fract: f32,
-    pub quarter_beat_index: u32,
 
     // pub low_pass: LowPass,
     // pub low_pass_buffer: RingBuffer<f32>,
@@ -90,17 +90,18 @@ impl Analysis {
             tick_start_index: 0,
             tick_end_index: 0,
 
-            normalizer: MaxDecayNormalizer::new(0.9999, 0.05),
+            normalizer: MaxDecayNormalizer::new(0.999997, 0.05),
             signal: RingBuffer::new(audio_buffer_size),
-            signal_dft: Dft::new(dft_size),
+            signal_dft: Dft::new(dft_size, sample_rate),
 
             beat_detector: BeatDetector::new(args, sample_rate),
             bpm_tracker: BpmTracker::new(args, sample_rate),
 
             beat_in_tick: false,
             real_beats: 0,
+
+            fake_beats: 0,
             beat_fract: 0.0,
-            quarter_beat_index: 0,
 
             // low_pass: LowPass::new(sample_rate, 100),
             // low_pass_buffer: RingBuffer::new(audio_buffer_size),
@@ -178,7 +179,7 @@ impl Analysis {
         self.last_tick = Instant::now();
 
         self.beat_in_tick = false;
-        let quarter_pre = (self.beat_fract / 0.25).fract();
+        let fract_pre = self.beat_fract;
 
         // Run sample-by-sample analysis.
         self.update_slice_indices(signal, delta);
@@ -196,9 +197,8 @@ impl Analysis {
         }
 
         self.beat_fract = self.bpm_tracker.sample_to_beat_fract(self.sample_index);
-        let quarter_post = (self.beat_fract / 0.25).fract();
-        if quarter_post < quarter_pre {
-            self.quarter_beat_index += 1;
+        if self.beat_fract < fract_pre {
+            self.fake_beats += 1;
         }
 
         // Run DFTs on filtered/split signals.
