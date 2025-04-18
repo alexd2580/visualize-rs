@@ -18,13 +18,25 @@ layout(push_constant, std140) uniform PushConstants {
 
 layout(rgba32f, binding = 0) uniform image2D canvas;
 
-layout(binding = 1) buffer Dft {
+layout(binding = 1) buffer Signal {
+    int size;
+    int write_index;
+    float data[];
+} bass_signal;
+
+layout(binding = 2) buffer Dft {
     int size;
     float data[];
 } signal_dft;
 
+const float TWO_PI = 6.28318530718;
+
 vec2 ndc_to_tex(vec2 ndc) {
     return 0.5 * ndc + 0.5;
+}
+
+float time_sin(float factor) {
+    return sin(constants.time * factor);
 }
 
 float len2(vec2 v) {
@@ -75,7 +87,7 @@ float circle(vec2 xy, vec2 pos, float radius) {
     return float((len2(xy - pos) + 0.0001) < radius * radius);
 }
 
-vec3 quad_grid(vec2 xy) {
+vec3 quad_lasers(vec2 xy) {
     int i = int(floor(constants.beat_fract / 0.25));
     return grid(xy, ivec2(4, 5), ivec2(i, 0)) * vec3(0.22, 1.0, 0.07);
 }
@@ -105,7 +117,7 @@ vec3 beat_bouncer(vec2 xy) {
     return clamp(1.0 - 500.0 * sdf, 0.0, 1.0) * vec3((beat_index & 1) == 0, (beat_index & 2) == 0, (beat_index & 4) == 0);
 }
 
-vec3 dft(vec2 xy) {
+vec3 dft_raw(vec2 xy) {
     vec2 tex = ndc_to_tex(xy * 2.0);
     float x = tex.x - 0.5;
 
@@ -116,38 +128,35 @@ vec3 dft(vec2 xy) {
         return vec3(0.0);
     }
 
-    if (abs(x) < 0.01) {
-        return vec3(0.0, 0.0, 1.0);
-    }
-
-    if (abs(x - 1.0) < 0.01) {
-        return vec3(1.0, 0.0, 0.0);
-    }
-
-    if (abs(x + 1.0) < 0.01) {
-        return vec3(0.0, 1.0, 0.0);
-    }
-
     float inv_y = abs(0.5 - tex.y);
-    if (abs(inv_y) < 0.01) {
-        return vec3(0.0, 0.0, 1.0);
-    }
-
-    if (abs(inv_y - 1.0) < 0.01) {
-        return vec3(1.0, 0.0, 0.0);
-    }
-
-    if (abs(inv_y + 1.0) < 0.01) {
-        return vec3(0.0, 1.0, 0.0);
-    }
 
     float min_db = -20.0;
     float db_range = 120.0;
     float db = (signal_dft.data[dft_index] - min_db) / db_range;
 
-    vec3 value = db > inv_y ? neon_color(db + sin(0.001 * constants.time * inv_y)) : vec3(0.0);
+    vec3 value = db > inv_y ? neon_color(0.5 * x + 0.3 * constants.time + tex.y) : vec3(0.0);
 
     return vec3(value);
+}
+
+vec3 dft(vec2 ndc_aspect) {
+    float rotate_by = (TWO_PI + time_sin(2.45)) * time_sin(0.3459872);
+    mat2x2 rotation = rotation_2d(rotate_by);
+    vec2 rotated = rotation * ndc_aspect;
+    vec2 zoomed = rotated * (2.0 + 0.5 * time_sin(0.92834987));
+    return dft_raw(zoomed);
+}
+
+vec3 signal_line(vec2 ndc) {
+    float x = abs(ndc.x);
+    float y = -ndc.y;
+    int hsize = bass_signal.size / 4;
+    int index = int(bass_signal.write_index - 1 - x * hsize);
+    index = index + (index < 0 ? bass_signal.size : 0);
+
+    float value = 4.0 * bass_signal.data[index];
+    float close = abs(y - value) < 0.01 ? 1.0 : 0.0;
+    return neon_color(value + 0.5 * index / 44100.0) * vec3(close);
 }
 
 void main() {
@@ -164,19 +173,26 @@ void main() {
     // Circle in center.
     float bass_pump_color_index = 0.25 * constants.time / constants.bpm_period;
     vec3 bass_pump_color = neon_color(bass_pump_color_index);
-    float radius = 1.5 * constants.bass_energy + 0.1;
+    float radius = min(1.5 * constants.bass_energy + 0.1, 0.2);
     vec3 bass_pump = circle(ndc_aspect, vec2(0.0), radius) * bass_pump_color;
 
     // Ticker displays.
-    vec3 beat_display = quad_grid(ndc_aspect * 1.5) + beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
+    vec3 beat_display = beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
     vec3 bouncer = beat_bouncer(ndc_aspect);
 
-    // DFT
-    vec3 dft_color = dft(ndc_aspect * 2.0);
+    vec3 dft_color = dft(ndc_aspect);
 
     // Current image.
-    vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
-    color = dft_color + bouncer;
+    // bass_pump +beat_display +
+    // vec3 color = bouncer; //dft_color ;// + signal_line(ndc);
+    vec3 color = signal_line(ndc);
+
+
+
+    // vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
+    //
+    // color = bouncer + signal_line(ndc);
+    // color = dft_color + bouncer;
 
 
     // float beat_index = float(constants.real_beats);

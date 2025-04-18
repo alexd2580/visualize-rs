@@ -102,7 +102,7 @@ impl FrameEnergyStats {
 pub struct BeatDetector {
     pub bass_energy: BandToFrameEnergy,
     pub bass_stats: FrameEnergyStats,
-    bass_buffer: RingBuffer<f32>,
+    pub bass_buffer: RingBuffer<f32>,
 }
 
 impl BeatDetector {
@@ -120,8 +120,8 @@ impl BeatDetector {
     }
 
     pub fn on_pcm_sample(&mut self, sample_index: u64, x: f32) -> bool {
-        self.bass_buffer.push(x);
         self.bass_energy.sample(x);
+        self.bass_buffer.push(self.bass_energy.frame_energy);
 
         // Every N pcm samples....
         if sample_index & 0b111111 == 0 {

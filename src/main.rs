@@ -105,7 +105,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
                     analysis.as_mut_ref().on_tick(&audio.signal);
                     match visualizer
                         .as_mut_ref()
-                        .tick(&audio.signal, &analysis.as_ref())
+                        .tick(&analysis.as_ref())
                     {
                         Ok(()) => ControlFlow::Poll,
                         Err(err) => {

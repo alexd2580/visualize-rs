@@ -56,7 +56,7 @@ impl PushConstants {
 }
 
 pub struct Visualizer {
-    signal_gpu: Rc<multi_buffer::MultiBuffer>,
+    bass_signal_gpu: Rc<multi_buffer::MultiBuffer>,
     signal_dft_gpu: Rc<multi_buffer::MultiBuffer>,
 
     // low_pass_gpu: Rc<multi_buffer::MultiBuffer>,
@@ -135,9 +135,9 @@ impl Visualizer {
         let window = Rc::new(window);
         let mut vulkan = Vulkan::new(&window, &args.shader_paths, !args.no_vsync)?;
 
-        let signal_gpu = {
+        let bass_signal_gpu = {
             let size = signal.serialized_size();
-            vulkan.new_multi_buffer("signal", size, Some(1))?
+            vulkan.new_multi_buffer("bass_signal", size, Some(1))?
         };
         // let low_pass_gpu = {
         //     let size = analysis.low_pass_buffer.serialized_size();
@@ -161,7 +161,7 @@ impl Visualizer {
         // };
 
         let mut visualizer = Self {
-            signal_gpu,
+            bass_signal_gpu,
             signal_dft_gpu,
             // low_pass_gpu,
             // low_pass_dft_gpu,
@@ -206,7 +206,7 @@ impl Visualizer {
         Ok(())
     }
 
-    pub fn tick(&mut self, signal: &RingBuffer<f32>, analysis: &Analysis) -> VResult<()> {
+    pub fn tick(&mut self, analysis: &Analysis) -> VResult<()> {
         if self.new_resolution.is_some() {
             // Don't render anything.
             sleep_ms(16);
@@ -221,7 +221,7 @@ impl Visualizer {
         let read_index = analysis.tick_start_index;
         let write_index = analysis.tick_end_index;
 
-        signal.write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
+        // signal.write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
         // analysis.low_pass_buffer.write_to_pointer(
         //     read_index,
         //     write_index,
@@ -236,6 +236,12 @@ impl Visualizer {
         analysis
             .signal_dft
             .write_log_bins_to_pointer(self.signal_dft_gpu.mapped(0));
+
+        analysis.beat_detector.bass_buffer.write_to_pointer(
+            read_index,
+            write_index,
+            self.bass_signal_gpu.mapped(0),
+        );
         // analysis
         //     .low_pass_dft
         //     .write_to_pointer(self.low_pass_dft_gpu.mapped(0));

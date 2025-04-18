@@ -22,6 +22,8 @@ layout(rgba32f, binding = 1) uniform image2D frame;
 layout(binding = 2) uniform sampler2D frame_prev;
 layout(rgba32f, binding = 3) uniform image2D present;
 
+const float PI_OVER_6 = 0.866025403;
+
 vec2 ndc_to_tex(vec2 ndc) {
     return 0.5 * ndc + 0.5;
 }
@@ -62,20 +64,83 @@ vec3 load_canvas(vec2 ndc, out float mask) {
     return canvas_color;
 }
 
-vec3 load_prev_frame(vec2 ndc) {
-    float bar = float(constants.beat_index >> 2);
-    vec2 flight_direction = vec2(
-        sin(bar + 0.293847987435 * constants.time),
-        cos(bar + 0.234567438598 * constants.time)
+vec2 time_sin2(float a, float b, float offset) {
+    return vec2(
+        sin(offset + a * constants.time),
+        cos(offset + b * constants.time)
     );
-    vec2 zoom = 1.0 + 0.01 * vec2(
-        sin(0.293847987435 * constants.time),
-        cos(0.234567438598 * constants.time)
-    );
-    vec2 prev_coords = zoom * ndc + 0.01 * flight_direction;
-    vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb; // prev_coords
+}
 
-    return prev_color;
+const float FLIGHT_ALPHA = 0.98;
+const float FRACTAL_ALPHA = 0.90;
+// const float FRACTAL_ALPHA = 0.6;
+
+float linger(float t) {
+    float x = abs(fract(0.3 * t) * 2.0 - 1.0);
+    return smoothstep(0.3, 0.7, x);
+}
+
+vec2 fractal(vec2 xy) {
+    mat2 rot2 = rotation_2d(0.1 * constants.time + 0.0 * constants.bass_energy);
+
+    for (int i=0; i < 2 /*+ (constants.real_beats & 2)*/; i++) {
+        xy = abs(xy);
+        xy -= 0.5;
+        xy *= 1.25;
+        xy *= rot2;
+    }
+
+    return xy;
+}
+
+vec3 load_prev_frame(vec2 ndc) {
+    float transition = 0.1 * constants.time;
+    float beta = linger(transition);
+    beta = 1.0;
+
+    float bar = float(constants.beat_index >> 2);
+
+    vec2 scale = 1.0 + 0.01 * time_sin2(0.3453487435, 0.987435234, bar);
+
+    vec2 translate_flight = 0.01 * time_sin2(0.293847987435, 0.234567438598, bar);
+    vec2 prev_coords_flight = scale * ndc + translate_flight;
+
+    vec2 translate_fractal = 0.01 * time_sin2(0.293847987435, 0.234567438598, 0.0);
+    vec2 prev_coords_fractal = scale * 2.0 * fract(ndc) - 1.0 + translate_fractal;
+    vec2 prev_coords_true_fractal = fractal(ndc);
+
+    vec2 prev_coords = mix(prev_coords_flight, prev_coords_fractal, beta);
+    vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb;
+
+    float alpha = mix(FLIGHT_ALPHA, FRACTAL_ALPHA, beta);
+    return alpha * prev_color;
+}
+
+// vec3 load_prev_frame_new(vec2 ndc) {
+//     float transition = 0.1 * constants.time;
+//     float bar = float(constants.beat_index >> 2);
+//     vec2 scale = 1.0 + 0.01 * time_sin2(0.3453487435, 0.987435234, bar);
+//     vec2 translate_kaleidoscope = 0.01 * time_sin2(0.293847987435, 0.234567438598, 0.0);
+//
+//     vec2 before = ndc + translate_kaleidoscope;
+//     float len_before = length(before);
+//
+//     float angle = acos(before.x / len_before) * before.y < 0 ? -1.0 : 1.0;
+//     float new_angle = fract(angle * 4) / 4;
+//
+//     vec2 after = fract(len_before) * vec2(cos(new_angle), sin(new_angle));
+//
+//     vec2 prev_coords_kaleidoscope = after;
+//     vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords_kaleidoscope)).rgb;
+//     return 0.99 * prev_color;
+// }
+
+vec3 colorshift(vec2 ndc, vec3 color) {
+    float f = dot(ndc, ndc);
+    return fract(
+        color +
+        0.01 * f * abs(vec3(sin(constants.time * 2.349587), sin(constants.time * 2.23894793), sin(constants.time * 2.982374)))
+    );
 }
 
 void main() {
@@ -84,13 +149,16 @@ void main() {
 
     vec2 pixel_coords = vec2(ipixel_coords) + 0.0;
     vec2 ndc = 2.0 * pixel_coords / vec2(iimage_size) - 1.0;
+    float average_size = 0.5 * float(iimage_size.x + iimage_size.y);
+    vec2 ndc_aspect = vec2(iimage_size) * ndc / average_size;
 
     float canvas_mask;
     vec3 canvas_color = load_canvas(ndc, canvas_mask);
     vec3 frame_color = load_prev_frame(ndc);
 
+    vec3 next_frame = canvas_color + frame_color;
+    next_frame = colorshift(ndc, next_frame);
 
-    vec3 next_frame = canvas_color + 0.98 * frame_color;
     vec3 next_present = (1.0 - canvas_mask) * frame_color + canvas_color;
 
     // vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;

@@ -197,7 +197,7 @@ impl Analysis {
         }
 
         self.beat_fract = self.bpm_tracker.sample_to_beat_fract(self.sample_index);
-        if self.beat_fract < fract_pre {
+        if self.beat_fract < 0.1 && fract_pre > 0.9 {
             self.fake_beats += 1;
         }
 
