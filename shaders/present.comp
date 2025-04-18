@@ -7,20 +7,21 @@ layout(push_constant, std140) uniform PushConstants {
     layout(offset = 4) float time;
 
     layout(offset = 8) float bass_energy;
-    layout(offset = 12) bool is_beat;
-    layout(offset = 16) uint real_beats;
+    layout(offset = 12) float cumulative_bass_energy;
+    layout(offset = 16) bool is_beat;
+    layout(offset = 20) uint real_beats;
 
-    layout(offset = 20) float bpm_confidence;
-    layout(offset = 24) float bpm_period;
-    layout(offset = 28) int beat_index;
-    layout(offset = 32) float beat_fract;
+    layout(offset = 24) float bpm_confidence;
+    layout(offset = 28) float bpm_period;
+    layout(offset = 32) int beat_index;
+    layout(offset = 36) float beat_fract;
 } constants;
 
 layout(binding = 0) uniform sampler2D canvas;
-layout(rgba32f, binding = 1) uniform image2D frame;
-// layout(rgba32f, binding = 2) uniform image2D frame_prev;
-layout(binding = 2) uniform sampler2D frame_prev;
-layout(rgba32f, binding = 3) uniform image2D present;
+layout(binding = 1) uniform sampler2D accent;
+layout(rgba32f, binding = 2) uniform image2D frame;
+layout(binding = 3) uniform sampler2D frame_prev;
+layout(rgba32f, binding = 4) uniform image2D present;
 
 const float PI_OVER_6 = 0.866025403;
 
@@ -81,21 +82,23 @@ float linger(float t) {
 }
 
 vec2 fractal(vec2 xy) {
-    mat2 rot2 = rotation_2d(0.1 * constants.time + 0.0 * constants.bass_energy);
+    mat2 rot2 = rotation_2d(-0.1 * constants.time + 0.0002 * constants.cumulative_bass_energy);
 
-    for (int i=0; i < 2 /*+ (constants.real_beats & 2)*/; i++) {
+    int num_cycles = 7; //1 + int(constants.real_beats & 2);
+    for (int i = 0; i < num_cycles; i++) {
         xy = abs(xy);
-        xy -= 0.5;
+        xy -= 0.5 + 0.01 * i;
         xy *= 1.25;
-        xy *= rot2;
+        xy *= rot2 + 0.01 * i;
     }
 
     return xy;
 }
 
 vec3 load_prev_frame(vec2 ndc) {
-    float transition = 0.1 * constants.time;
+    float transition = 0.05 * constants.time;
     float beta = linger(transition);
+    // beta = 0.07;
     beta = 1.0;
 
     float bar = float(constants.beat_index >> 2);
@@ -106,14 +109,17 @@ vec3 load_prev_frame(vec2 ndc) {
     vec2 prev_coords_flight = scale * ndc + translate_flight;
 
     vec2 translate_fractal = 0.01 * time_sin2(0.293847987435, 0.234567438598, 0.0);
-    vec2 prev_coords_fractal = scale * 2.0 * fract(ndc) - 1.0 + translate_fractal;
-    vec2 prev_coords_true_fractal = fractal(ndc);
+    vec2 prev_coords_fractal = fractal(ndc);
 
     vec2 prev_coords = mix(prev_coords_flight, prev_coords_fractal, beta);
     vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb;
 
     float alpha = mix(FLIGHT_ALPHA, FRACTAL_ALPHA, beta);
     return alpha * prev_color;
+}
+
+vec3 load_accent(vec2 ndc) {
+    return texture(accent, ndc_to_tex(ndc)).rgb;
 }
 
 // vec3 load_prev_frame_new(vec2 ndc) {
@@ -136,6 +142,7 @@ vec3 load_prev_frame(vec2 ndc) {
 // }
 
 vec3 colorshift(vec2 ndc, vec3 color) {
+    return color;
     float f = dot(ndc, ndc);
     return fract(
         color +
@@ -155,11 +162,13 @@ void main() {
     float canvas_mask;
     vec3 canvas_color = load_canvas(ndc, canvas_mask);
     vec3 frame_color = load_prev_frame(ndc);
+    vec3 accent_color = load_accent(ndc);
 
     vec3 next_frame = canvas_color + frame_color;
     next_frame = colorshift(ndc, next_frame);
 
-    vec3 next_present = (1.0 - canvas_mask) * frame_color + canvas_color;
+    vec3 next_present = canvas_color;
+    next_present += (1.0 - canvas_mask) * (frame_color + accent_color);
 
     // vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;
     // vec3 sum_color2 = len_canvas > 0.5 ? canvas_color : 0.99 * prev_color;

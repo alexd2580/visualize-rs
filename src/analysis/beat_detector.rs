@@ -15,6 +15,7 @@ pub struct BandToFrameEnergy {
     pub filter: BiquadBandPass,
     pub signal_energy: Energy,
     pub frame_energy: f32,
+    pub cumulative_bass_energy: f32,
 }
 
 impl BandToFrameEnergy {
@@ -23,12 +24,14 @@ impl BandToFrameEnergy {
             filter: BiquadBandPass::new(sample_rate, center_fq, q),
             signal_energy: Energy::new(sample_rate as usize / 10),
             frame_energy: 0.0,
+            cumulative_bass_energy: 0.0,
         }
     }
 
     fn sample(&mut self, x: f32) {
         let x = self.filter.sample(x);
         self.frame_energy = self.signal_energy.sample(x);
+        self.cumulative_bass_energy += self.frame_energy;
     }
 }
 

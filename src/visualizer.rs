@@ -101,6 +101,8 @@ impl Visualizer {
 
         let canvas = vulkan.new_multi_image("canvas", image_size, None)?;
         self.images.push(canvas);
+        let accent = vulkan.new_multi_image("accent", image_size, None)?;
+        self.images.push(accent);
 
         let frame = vulkan.new_multi_image("frame", image_size, None)?;
         let frame_prev = vulkan.prev_shift(&frame, "frame_prev");
@@ -254,8 +256,9 @@ impl Visualizer {
         push_constants.u32("frame_index", self.vulkan.num_frames as u32);
         push_constants.f32("time", analysis.epoch.elapsed().as_secs_f32());
 
-        let bass_energy = analysis.beat_detector.bass_energy.frame_energy;
-        push_constants.f32("bass_energy", bass_energy);
+        let bass_energy = &analysis.beat_detector.bass_energy;
+        push_constants.f32("bass_energy", bass_energy.frame_energy);
+        push_constants.f32("cumulative_bass_energy", bass_energy.cumulative_bass_energy);
         push_constants.bool("is_beat", analysis.beat_in_tick);
         push_constants.u32("real_beats", analysis.real_beats);
 

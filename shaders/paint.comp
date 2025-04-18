@@ -17,14 +17,15 @@ layout(push_constant, std140) uniform PushConstants {
 } constants;
 
 layout(rgba32f, binding = 0) uniform image2D canvas;
+layout(rgba32f, binding = 1) uniform image2D accent;
 
-layout(binding = 1) buffer Signal {
+layout(binding = 2) buffer Signal {
     int size;
     int write_index;
     float data[];
 } bass_signal;
 
-layout(binding = 2) buffer Dft {
+layout(binding = 3) buffer Dft {
     int size;
     float data[];
 } signal_dft;
@@ -37,6 +38,10 @@ vec2 ndc_to_tex(vec2 ndc) {
 
 float time_sin(float factor) {
     return sin(constants.time * factor);
+}
+
+vec2 time_sin2(float a, float b) {
+    return vec2(time_sin(a), time_sin(b));
 }
 
 float len2(vec2 v) {
@@ -147,6 +152,17 @@ vec3 dft(vec2 ndc_aspect) {
     return dft_raw(zoomed);
 }
 
+
+float linger(float t) {
+    float x = abs(fract(0.3 * t) * 2.0 - 1.0);
+    return smoothstep(0.4, 0.6, x);
+}
+
+float linger_long(float t) {
+    float x = abs(fract(0.3 * t) * 2.0 - 1.0);
+    return smoothstep(0.15, 0.85, x);
+}
+
 vec3 signal_line(vec2 ndc) {
     float x = abs(ndc.x);
     float y = -ndc.y;
@@ -154,13 +170,16 @@ vec3 signal_line(vec2 ndc) {
     int index = int(bass_signal.write_index - 1 - x * hsize);
     index = index + (index < 0 ? bass_signal.size : 0);
 
-    float value = 4.0 * bass_signal.data[index];
-    float close = abs(y - value) < 0.01 ? 1.0 : 0.0;
+    float value = bass_signal.data[index];
+    float close1 = abs(y) < value ? 1.0 : 0.0;
+    float close2 = abs(abs(y) - value) < 0.01 ? 1.0 : 0.0;
+
+    float close = mix(close1, close2, linger(0.139847 * constants.time));
+
     return neon_color(value + 0.5 * index / 44100.0) * vec3(close);
 }
 
 void main() {
-
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
 
@@ -173,37 +192,26 @@ void main() {
     // Circle in center.
     float bass_pump_color_index = 0.25 * constants.time / constants.bpm_period;
     vec3 bass_pump_color = neon_color(bass_pump_color_index);
-    float radius = min(1.5 * constants.bass_energy + 0.1, 0.2);
-    vec3 bass_pump = circle(ndc_aspect, vec2(0.0), radius) * bass_pump_color;
+    float radius = min(1.5 * constants.bass_energy + 0.05, 0.2);
+    vec3 bass_pump = circle(ndc_aspect + 0.5 * time_sin2(0.113802934, 0.238749238), vec2(0.0), radius) * bass_pump_color;
 
     // Ticker displays.
     vec3 beat_display = beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
     vec3 bouncer = beat_bouncer(ndc_aspect);
-
-    vec3 dft_color = dft(ndc_aspect);
+    vec3 dft_barrel = dft(ndc_aspect);
+    vec3 line = signal_line(ndc);
 
     // Current image.
     // bass_pump +beat_display +
     // vec3 color = bouncer; //dft_color ;// + signal_line(ndc);
-    vec3 color = signal_line(ndc);
-
-
+    vec3 canvas_color = mix(dft_barrel, line, linger(0.021293874 * constants.time));
+    vec3 accent_color = bass_pump + bouncer;
 
     // vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
     //
     // color = bouncer + signal_line(ndc);
     // color = dft_color + bouncer;
 
-
-    // float beat_index = float(constants.real_beats);
-    // vec2 shifted_pixel_coords = pixel_coords + 10.0 * vec2(
-    //     sin(beat_index), // + 0.293847987435 * constants.time),
-    //     cos(beat_index) // + 0.234567438598 * constants.time)
-    // );
-    // shifted_pixel_coords = pixel_coords - vec2(0.0, +10.0);
-    //
-    // // Overlayed on top of previous canvas.
-    // vec3 load_color = 0.9 * imageLoad(canvas, ivec2(shifted_pixel_coords)).rgb;
-    // imageStore(canvas, ipixel_coords, vec4(0.9 * load_color + color, 1));
-    imageStore(canvas, ipixel_coords, vec4(color, 1));
+    imageStore(canvas, ipixel_coords, vec4(canvas_color, 1));
+    imageStore(accent, ipixel_coords, vec4(accent_color, 1));
 }
