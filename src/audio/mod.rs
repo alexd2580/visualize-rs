@@ -258,9 +258,9 @@ impl DelayedOutput {
             let vis_out_name = visualizer_playback.name.as_ref().unwrap();
             debug!("App output stream: {vis_out_name}");
 
-            routing.set_default_sink_device(&virtual_sink.name.as_ref().unwrap())?;
-            routing.set_record_input(&visualizer_record, &virtual_monitor)?;
-            routing.set_playback_output(&visualizer_playback, &default_sink)?;
+            routing.set_default_sink_device(virtual_sink.name.as_ref().unwrap())?;
+            routing.set_record_input(visualizer_record, &virtual_monitor)?;
+            routing.set_playback_output(visualizer_playback, &default_sink)?;
         } else {
             warn!("Can't find app '{app_name}' in record or playback streams");
         }
@@ -304,10 +304,6 @@ impl Deref for Audio {
 impl Audio {
     pub fn sample_rate(&self) -> u32 {
         self.cpal.sample_rate
-    }
-
-    pub fn buffer_size(&self) -> usize {
-        self.stereo.read().left.size
     }
 
     fn init_input_stream(

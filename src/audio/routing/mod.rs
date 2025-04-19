@@ -82,10 +82,10 @@ impl Routing {
             .expect("Failed to connect context");
 
         loop {
-            if let false = Self::poll_mainloop(&mut mainloop)? {
+            if !Self::poll_mainloop(&mut mainloop)? {
                 panic!("Libpulse wants to quit?");
             }
-            if let true = Self::check_context(&context)? {
+            if Self::check_context(&context)? {
                 break;
             }
         }
@@ -100,10 +100,10 @@ impl Routing {
 
     pub fn wait_for_operation<G: ?Sized>(&mut self, operation: Operation<G>) -> Result<(), Error> {
         loop {
-            if let false = Self::poll_mainloop(&mut self.mainloop)? {
+            if !Self::poll_mainloop(&mut self.mainloop)? {
                 panic!("Libpulse wants to quit?");
             }
-            if let true = Self::check_operation(&operation)? {
+            if Self::check_operation(&operation)? {
                 break;
             }
         }

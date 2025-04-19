@@ -30,7 +30,7 @@ pub fn exec_command(command: &[&str]) -> Result<String, Error> {
 
 /// Relative difference.
 /// For reference see <https://en.wikipedia.org/wiki/Relative_change_and_difference>
-pub fn relative_delta(a: f32, b: f32) -> f32 {
+pub fn _relative_delta(a: f32, b: f32) -> f32 {
     ((a / b) - 1f32).abs()
 }
 
@@ -45,7 +45,7 @@ pub fn relative_delta(a: f32, b: f32) -> f32 {
 /// let bin_index = dft_index_of_frequency(fq, sample_rate, dft_size);
 /// assert!(bin_index == 3);
 /// ```
-pub fn dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: usize) -> usize {
+pub fn _dft_index_of_frequency(frequency: usize, sample_rate: usize, dft_size: usize) -> usize {
     // For reference see
     // https://stackoverflow.com/questions/4364823/how-do-i-obtain-the-frequencies-of-each-value-in-an-fft
     // 0:   0 * 44100 / 1024 =     0.0 Hz

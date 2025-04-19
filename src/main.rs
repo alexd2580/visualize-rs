@@ -60,7 +60,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
 
     // The websocket server launches a tokio runtime and listens to a channel.
     // No ticking apart from populating the channel is required.
-    let server = args.websocket.then(|| analysis::server::Server::start());
+    let server = args.websocket.then(analysis::server::Server::start);
 
     // Analysis should be ticked once per "frame".
     let analysis = {
@@ -90,7 +90,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
     } else {
         // The visualizer should be ticked once per frame.
         let (mut event_loop, visualizer) =
-            visualizer::Visualizer::new(&args, &audio.signal, &analysis.as_ref())?;
+            visualizer::Visualizer::new(args, &audio.signal, &analysis.as_ref())?;
         let visualizer = cell::Cell::new(visualizer);
 
         // Use the visual winit-based mainloop.
@@ -103,10 +103,7 @@ fn run_main(args: &Args) -> error::VResult<()> {
                 // No other events, run analysis and render a frame.
                 window::Event::Tick => {
                     analysis.as_mut_ref().on_tick(&audio.signal);
-                    match visualizer
-                        .as_mut_ref()
-                        .tick(&analysis.as_ref())
-                    {
+                    match visualizer.as_mut_ref().tick(&analysis.as_ref()) {
                         Ok(()) => ControlFlow::Poll,
                         Err(err) => {
                             tracing::error!("Running vulkan tick failed: {err}");

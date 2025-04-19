@@ -77,7 +77,7 @@ async fn run_server(sender: Arc<FrameSender>) {
 }
 
 pub struct Server {
-    receiver: FrameReceiver,
+    _receiver: FrameReceiver,
     runtime: Option<Runtime>,
     thread_handle: JoinHandle<()>,
 }
@@ -92,7 +92,7 @@ impl Server {
         let thread_handle = runtime.spawn(run_server(sender.clone()));
 
         let server = Server {
-            receiver,
+            _receiver: receiver,
             runtime: Some(runtime),
             thread_handle,
         };

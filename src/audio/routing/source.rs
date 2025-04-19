@@ -46,6 +46,7 @@ impl Routing {
         self.get_source_device_by_name(server_info.default_source_name.unwrap().as_ref())
     }
 
+    #[allow(dead_code)]
     pub fn set_default_source_device(&mut self, name: &str) -> Result<bool, Error> {
         let result = Cell::new(false);
         let operation = {

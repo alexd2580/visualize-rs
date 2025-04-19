@@ -20,7 +20,7 @@ pub struct Dft {
 }
 
 impl Dft {
-    pub fn output_byte_size(input_size: usize) -> usize {
+    pub fn _output_byte_size(input_size: usize) -> usize {
         (input_size / 2 + 1) * mem::size_of::<f32>()
     }
 
@@ -107,11 +107,11 @@ impl Dft {
     //     }
     // }
 
-    pub fn serialized_size(&self) -> usize {
-        Dft::output_byte_size(self.size()) + mem::size_of::<i32>()
+    pub fn _serialized_size(&self) -> usize {
+        Dft::_output_byte_size(self.size()) + mem::size_of::<i32>()
     }
 
-    pub fn write_to_pointer(&self, target: *mut c_void) {
+    pub fn _write_to_pointer(&self, target: *mut c_void) {
         unsafe {
             let size = self.fq_db.len();
             *target.cast::<u32>() = u32::try_from(size).unwrap();

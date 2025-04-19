@@ -87,7 +87,7 @@ impl BeatDetector {
     const BEAT_FRAMES_PER_SAMPLE: f32 = 64.0;
 
     pub fn new(args: &Args, sample_rate: f32) -> Self {
-        let beat_frames_per_s = sample_rate as f32 / Self::BEAT_FRAMES_PER_SAMPLE;
+        let beat_frames_per_s = sample_rate / Self::BEAT_FRAMES_PER_SAMPLE;
         Self {
             filter: BiquadBandPass::new(sample_rate, 50, 6.0),
             energy: Energy::new(sample_rate as usize / 10),

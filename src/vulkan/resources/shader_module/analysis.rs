@@ -72,6 +72,7 @@ fn match_globals(
     Ok(local_size)
 }
 
+#[allow(dead_code)]
 pub trait DescriptorInfo {
     fn storage(&self) -> vk::DescriptorType;
     fn set_index(&self) -> usize;
@@ -79,6 +80,7 @@ pub trait DescriptorInfo {
     fn name(&self) -> &str;
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct VariableDeclaration {
     pub name: String,

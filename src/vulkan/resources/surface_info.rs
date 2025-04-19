@@ -79,7 +79,7 @@ impl SurfaceInfo {
         }
 
         let mut surface_resolution = surface_capabilities.current_extent;
-        if surface_resolution.width == std::u32::MAX {
+        if surface_resolution.width == u32::MAX {
             error!("Unexpected situation: {surface_capabilities:#?}");
             warn!("Setting surface resolution to HD");
             surface_resolution = vk::Extent2D {

@@ -33,7 +33,7 @@ impl Fence {
     pub unsafe fn wait(&self) -> Result<(), Error> {
         Ok(self
             .device
-            .wait_for_fences(&[self.fence], true, std::u64::MAX)?)
+            .wait_for_fences(&[self.fence], true, u64::MAX)?)
     }
 
     pub unsafe fn reset(&self) -> Result<(), Error> {

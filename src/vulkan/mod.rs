@@ -496,7 +496,7 @@ impl Vulkan {
     unsafe fn acquire_next_image(&self) -> VResult<(usize, vk::Image)> {
         let (present_index, _) = self.swapchain_loader.acquire_next_image(
             ***self.swapchain.as_ref().unwrap(),
-            std::u64::MAX,
+            u64::MAX,
             **self.image_acquired_semaphore,
             vk::Fence::null(),
         )?;
@@ -524,7 +524,7 @@ impl Vulkan {
                     0
                 });
 
-                if let Some(..) = field.dimensions {
+                if field.dimensions.is_some() {
                     warn!("Don't know how to handle {field:?}");
                 }
 
@@ -633,7 +633,7 @@ impl Vulkan {
             self.push_constants(
                 &resources.pipeline_layout,
                 &resources.shader_module,
-                &push_constant_values,
+                push_constant_values,
             );
             self.push_descriptors(&resources.pipeline_layout, &write_descriptor_set);
             self.dispatch(&resources.shader_module);

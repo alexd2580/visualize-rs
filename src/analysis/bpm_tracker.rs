@@ -142,10 +142,10 @@ impl BpmTracker {
         let best_candidate_phase = (0..10)
             .map(|step| {
                 let candidate_phase = step as f32 * self.bpm_candidate.period / 10.0;
-                return (
+                (
                     candidate_phase,
                     self.error_phase_period(candidate_phase, self.bpm_candidate.period),
-                );
+                )
             })
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
             .unwrap();
