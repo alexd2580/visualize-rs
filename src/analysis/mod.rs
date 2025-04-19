@@ -34,6 +34,7 @@ pub struct Analysis {
     normalizer: MaxDecayNormalizer,
 
     signal: RingBuffer<f32>,
+    pub bass_energy: RingBuffer<f32>,
     pub signal_dft: Dft,
 
     pub beat_detector: BeatDetector,
@@ -45,19 +46,6 @@ pub struct Analysis {
     pub fake_beats: u32,
     pub beat_fract: f32,
 
-    // pub low_pass: LowPass,
-    // pub low_pass_buffer: RingBuffer<f32>,
-    // pub low_pass_dft: Dft,
-
-    // pub high_pass: HighPass,
-    // pub high_pass_buffer: RingBuffer<f32>,
-    // pub high_pass_dft: Dft,
-
-    //
-    // pub frequency_band_border_indices: [usize; 8],
-    //
-    // pub beat_dft_range: (usize, usize),
-    // pub beat_detectors: Vec<BeatDetection>,
     broadcast: Option<Arc<FrameSender>>,
 }
 
@@ -91,7 +79,9 @@ impl Analysis {
             tick_end_index: 0,
 
             normalizer: MaxDecayNormalizer::new(0.999997, 0.05),
+
             signal: RingBuffer::new(audio_buffer_size),
+            bass_energy: RingBuffer::new(audio_buffer_size),
             signal_dft: Dft::new(dft_size, sample_rate),
 
             beat_detector: BeatDetector::new(args, sample_rate),
@@ -144,10 +134,14 @@ impl Analysis {
     fn on_pcm_sample(&mut self, x: f32) {
         self.sample_index += 1;
 
+        // The normalizer sucks. (introduces light saw wave to pure signals.)
+        // TODO replace with something better.
         let x = self.normalizer.sample(x);
         self.signal.push(x);
 
-        if self.beat_detector.on_pcm_sample(self.sample_index, x) {
+        let (bass_energy, is_beat) = self.beat_detector.on_pcm_sample(self.sample_index, x);
+        self.bass_energy.push(bass_energy);
+        if  is_beat {
             self.real_beats += 1;
             self.beat_in_tick = true;
             self.bpm_tracker.on_beat(self.sample_index);
@@ -159,9 +153,9 @@ impl Analysis {
             if let Some(broadcast) = &self.broadcast {
                 broadcast
                     .send(vec![
-                        self.beat_detector.bass_stats.energy,
-                        self.beat_detector.bass_stats.short.avg,
-                        self.beat_detector.bass_stats.long.avg,
+                        self.beat_detector.stats.energy,
+                        self.beat_detector.stats.short.avg,
+                        self.beat_detector.stats.long.avg,
                         to_float(self.beat_in_tick),
                         self.bpm_tracker.beat_probability(self.sample_index),
                         self.bpm_tracker.phase_error / 50.0 + 0.5,
@@ -185,7 +179,6 @@ impl Analysis {
         self.update_slice_indices(signal, delta);
         let start = self.tick_start_index;
         let end = self.tick_end_index;
-
         if end < start {
             for index in (start..self.buf_size).chain(0..end) {
                 self.on_pcm_sample(signal.data[index]);
@@ -196,6 +189,7 @@ impl Analysis {
             }
         }
 
+        // Count bpm beats by checking whether the beat fract wrapped around in this tick.
         self.beat_fract = self.bpm_tracker.sample_to_beat_fract(self.sample_index);
         if self.beat_fract < 0.1 && fract_pre > 0.9 {
             self.fake_beats += 1;
@@ -207,13 +201,5 @@ impl Analysis {
         let dft_vec = self.signal_dft.get_input_vec();
         self.signal.write_to_buffer(offset_from_end, dft_vec);
         self.signal_dft.run_transform();
-
-        // let low_pass_vec = self.low_pass_dft.get_input_vec();
-        // self.low_pass_buffer.write_to_buffer(low_pass_vec);
-        // self.low_pass_dft.run_transform();
-        //
-        // let high_pass_vec = self.high_pass_dft.get_input_vec();
-        // self.high_pass_buffer.write_to_buffer(high_pass_vec);
-        // self.high_pass_dft.run_transform();
     }
 }

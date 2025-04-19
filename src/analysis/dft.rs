@@ -150,7 +150,7 @@ impl Dft {
 
         for i in 0..self.output.len() {
             let old = self.fq_decay[i];
-            self.fq_decay[i] = (0.2 * self.output[i].norm() + 0.8 * old); // .max(0.8 * old);
+            self.fq_decay[i] = 0.2 * self.output[i].norm() + 0.8 * old;
             self.fq_db[i] = 20.0 * self.fq_decay[i].max(1e-6).log10();
         }
 

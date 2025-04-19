@@ -59,30 +59,6 @@ pub struct Visualizer {
     bass_signal_gpu: Rc<multi_buffer::MultiBuffer>,
     signal_dft_gpu: Rc<multi_buffer::MultiBuffer>,
 
-    // low_pass_gpu: Rc<multi_buffer::MultiBuffer>,
-    // low_pass_dft_gpu: Rc<multi_buffer::MultiBuffer>,
-    //
-    // high_pass_gpu: Rc<multi_buffer::MultiBuffer>,
-    // high_pass_dft_gpu: Rc<multi_buffer::MultiBuffer>,
-
-    // let dft_result_size = Dft::output_byte_size(args.dft_size) + mem::size_of::<i32>();
-    // history: History::new(history_size),
-    // history_gpu: vulkan.new_multi_buffer("history", history_gpu_size, Some(1))?,
-    // // Averages.
-    // long_avg: AlphaAvg::new(0.99),
-    // short_avg: WindowedAvg::new((0.2 * frame_rate as f32) as usize),
-    // // Beat detection.
-    // noise_threshold_factor: 0.25,
-    // beat_sigma_threshold_factor: 2.2,
-    // is_high: false,
-    // is_beat: false,
-    // // BPM detection.
-    // autocorrelation: Dft::new(8 * frame_rate),
-    // autocorrelation_gpu: vulkan.new_multi_buffer(
-    //     "autocorrelation",
-    //     autocorrelation_gpu_size,
-    //     Some(1),
-    // )?,
     new_resolution: Option<vk::Extent2D>,
     last_resized_time: Instant,
 
@@ -109,21 +85,6 @@ impl Visualizer {
 
         self.images.push(frame);
         self.images.push(frame_prev);
-
-        // let intermediate_prev = vulkan.prev_shift(&intermediate, "intermediate_prev");
-        // self.images.push(intermediate);
-        // self.images.push(intermediate_prev);
-
-        // let highlights = vulkan.new_multi_image("highlights", image_size, None)?;
-        // self.images.push(highlights);
-        // let bloom_h = vulkan.new_multi_image("bloom_h", image_size, None)?;
-        // self.images.push(bloom_h);
-        // let bloom_hv = vulkan.new_multi_image("bloom_hv", image_size, None)?;
-        // self.images.push(bloom_hv);
-        // let result = vulkan.new_multi_image("result", image_size, None)?;
-        // let result_prev = vulkan.prev_shift(&result, "result_prev");
-        // self.images.push(result);
-        // self.images.push(result_prev);
 
         Ok(())
     }
@@ -223,42 +184,26 @@ impl Visualizer {
         let read_index = analysis.tick_start_index;
         let write_index = analysis.tick_end_index;
 
-        // signal.write_to_pointer(read_index, write_index, self.signal_gpu.mapped(0));
-        // analysis.low_pass_buffer.write_to_pointer(
-        //     read_index,
-        //     write_index,
-        //     self.low_pass_gpu.mapped(0),
-        // );
-        // analysis.high_pass_buffer.write_to_pointer(
-        //     read_index,
-        //     write_index,
-        //     self.high_pass_gpu.mapped(0),
-        // );
-        //
         analysis
             .signal_dft
             .write_log_bins_to_pointer(self.signal_dft_gpu.mapped(0));
 
-        analysis.beat_detector.bass_buffer.write_to_pointer(
+        analysis.bass_energy.write_to_pointer(
             read_index,
             write_index,
             self.bass_signal_gpu.mapped(0),
         );
-        // analysis
-        //     .low_pass_dft
-        //     .write_to_pointer(self.low_pass_dft_gpu.mapped(0));
-        // analysis
-        //     .high_pass_dft
-        //     .write_to_pointer(self.high_pass_dft_gpu.mapped(0));
 
+        // Collect invocation constants.
         let mut push_constants = PushConstants::new();
 
         push_constants.u32("frame_index", self.vulkan.num_frames as u32);
         push_constants.f32("time", analysis.epoch.elapsed().as_secs_f32());
 
-        let bass_energy = &analysis.beat_detector.bass_energy;
-        push_constants.f32("bass_energy", bass_energy.frame_energy);
-        push_constants.f32("cumulative_bass_energy", bass_energy.cumulative_bass_energy);
+        let bass = &analysis.beat_detector.energy;
+        push_constants.f32("bass_energy", bass.last());
+        push_constants.f32("cumulative_bass_energy", bass.cumulative());
+
         push_constants.bool("is_beat", analysis.beat_in_tick);
         push_constants.u32("real_beats", analysis.real_beats);
 
@@ -268,6 +213,7 @@ impl Visualizer {
         push_constants.u32("beat_index", analysis.fake_beats);
         push_constants.f32("beat_fract", analysis.beat_fract);
 
+        // Actually render sth.
         if let Err(Error::Vk(vk::Result::ERROR_OUT_OF_DATE_KHR)) =
             unsafe { self.vulkan.tick(&push_constants) }
         {
