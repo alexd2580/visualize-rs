@@ -141,14 +141,14 @@ vec3 dft_raw(vec2 xy) {
 
     vec3 value = db > inv_y ? neon_color(0.5 * x + 0.3 * constants.time + tex.y) : vec3(0.0);
 
-    return vec3(value);
+    return value;
 }
 
 vec3 dft(vec2 ndc_aspect) {
     float rotate_by = (TWO_PI + time_sin(2.45)) * time_sin(0.3459872);
     mat2x2 rotation = rotation_2d(rotate_by);
     vec2 rotated = rotation * ndc_aspect;
-    vec2 zoomed = rotated * (2.0 + 0.5 * time_sin(0.92834987));
+    vec2 zoomed = rotated * (3.0 + 0.5 * time_sin(0.92834987));
     return dft_raw(zoomed);
 }
 
@@ -197,20 +197,13 @@ void main() {
 
     // Ticker displays.
     vec3 beat_display = beat_grid(ndc_aspect * 1.5) + bar_grid(ndc_aspect * 1.5);
-    vec3 bouncer = beat_bouncer(ndc_aspect);
+    // vec3 bouncer = beat_bouncer(ndc_aspect);
     vec3 dft_barrel = dft(ndc_aspect);
     vec3 line = signal_line(ndc);
 
     // Current image.
-    // bass_pump +beat_display +
-    // vec3 color = bouncer; //dft_color ;// + signal_line(ndc);
-    vec3 canvas_color = mix(dft_barrel, line, linger(0.021293874 * constants.time));
-    vec3 accent_color = bass_pump + bouncer;
-
-    // vec3 color = bass_pump + beat_display * pow(constants.bpm_confidence, 2.0);
-    //
-    // color = bouncer + signal_line(ndc);
-    // color = dft_color + bouncer;
+    vec3 canvas_color = 0.999 * mix(dft_barrel, line, linger(0.021293874 * constants.time));
+    vec3 accent_color = bass_pump; // DISLIKED! + bouncer;
 
     imageStore(canvas, ipixel_coords, vec4(canvas_color, 1));
     imageStore(accent, ipixel_coords, vec4(accent_color, 1));

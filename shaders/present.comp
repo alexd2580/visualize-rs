@@ -23,7 +23,12 @@ layout(rgba32f, binding = 2) uniform image2D frame;
 layout(binding = 3) uniform sampler2D frame_prev;
 layout(rgba32f, binding = 4) uniform image2D present;
 
+const float TWO_PI = 6.28318530718;
 const float PI_OVER_6 = 0.866025403;
+
+float len2(vec2 v) {
+    return dot(v, v);
+}
 
 vec2 ndc_to_tex(vec2 ndc) {
     return 0.5 * ndc + 0.5;
@@ -51,6 +56,26 @@ mat2 rotation_2d(float angle) {
     );
 }
 
+float time_sin(float factor) {
+    return sin(factor * TWO_PI * constants.time);
+}
+
+vec2 time_sin2(float a, float b) {
+    return vec2(
+        sin(a * TWO_PI * constants.time),
+        cos(b * TWO_PI * constants.time)
+    );
+}
+
+vec2 blackhole(vec2 v) {
+    vec2 black_hole = 0.5 * time_sin2(0.113802934, 0.238749238);
+    vec2 delta = black_hole - v;
+    float distance = length(delta);
+    delta /= distance;
+    // `-` because by "repelling" text coords, you're actually attracting the content.
+    return v - 0.01 * delta / distance;
+}
+
 vec3 load_canvas(vec2 ndc, out float mask) {
     // Overlayed on top of previous canvas.
     mat2 rotate_canvas = rotation_2d(sin(constants.time) * constants.bass_energy);
@@ -65,14 +90,7 @@ vec3 load_canvas(vec2 ndc, out float mask) {
     return canvas_color;
 }
 
-vec2 time_sin2(float a, float b, float offset) {
-    return vec2(
-        sin(offset + a * constants.time),
-        cos(offset + b * constants.time)
-    );
-}
-
-const float FLIGHT_ALPHA = 0.98;
+const float FLIGHT_ALPHA = 1.0;
 const float FRACTAL_ALPHA = 0.90;
 // const float FRACTAL_ALPHA = 0.6;
 
@@ -98,17 +116,13 @@ vec2 fractal(vec2 xy) {
 vec3 load_prev_frame(vec2 ndc) {
     float transition = 0.05 * constants.time;
     float beta = linger(transition);
-    // beta = 0.07;
-    beta = 1.0;
 
-    float bar = float(constants.beat_index >> 2);
+    vec2 scale = 1.0 + 0.02 * time_sin2(0.0123123, 0.0234892734);
 
-    vec2 scale = 1.0 + 0.01 * time_sin2(0.3453487435, 0.987435234, bar);
-
-    vec2 translate_flight = 0.01 * time_sin2(0.293847987435, 0.234567438598, bar);
+    vec2 translate_flight = 0.01 * time_sin2(0.0293847987435, 0.0234567438598);
     vec2 prev_coords_flight = scale * ndc + translate_flight;
 
-    vec2 translate_fractal = 0.01 * time_sin2(0.293847987435, 0.234567438598, 0.0);
+    vec2 translate_fractal = 0.01 * time_sin2(0.0293847987435, 0.0234567438598);
     vec2 prev_coords_fractal = fractal(ndc);
 
     vec2 prev_coords = mix(prev_coords_flight, prev_coords_fractal, beta);
@@ -164,11 +178,14 @@ void main() {
     vec3 frame_color = load_prev_frame(ndc);
     vec3 accent_color = load_accent(ndc);
 
-    vec3 next_frame = canvas_color + frame_color;
-    next_frame = colorshift(ndc, next_frame);
+    vec3 next_frame = 0.95 * (canvas_color + frame_color);
+    // next_frame = colorshift(ndc, next_frame);
 
     vec3 next_present = canvas_color;
     next_present += (1.0 - canvas_mask) * (frame_color + accent_color);
+
+    // next_present = canvas_color;
+    // next_present = fract(0.99 * next_present);
 
     // vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;
     // vec3 sum_color2 = len_canvas > 0.5 ? canvas_color : 0.99 * prev_color;
