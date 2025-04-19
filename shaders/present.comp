@@ -26,25 +26,9 @@ layout(rgba32f, binding = 4) uniform image2D present;
 const float TWO_PI = 6.28318530718;
 const float PI_OVER_6 = 0.866025403;
 
+// Vector functions.
 float len2(vec2 v) {
     return dot(v, v);
-}
-
-vec2 ndc_to_tex(vec2 ndc) {
-    return 0.5 * ndc + 0.5;
-}
-
-vec2 tex_to_ndc(vec2 tex) {
-    return 2.0 * tex - 1.0;
-}
-
-vec2 pixel_to_tex(ivec2 pixel, ivec2 size) {
-    // +0.5 because querying the texture using sampler we get floating pixel coordinates.
-    return (vec2(pixel) + 0.5) / vec2(size);
-}
-
-vec2 pixel_to_ndc(ivec2 pixel, ivec2 size) {
-    return tex_to_ndc(pixel_to_tex(pixel, size));
 }
 
 mat2 rotation_2d(float angle) {
@@ -56,6 +40,29 @@ mat2 rotation_2d(float angle) {
     );
 }
 
+// Coordinate system conversions.
+
+// [-1..1] to [0..1]
+vec2 ndc_to_tex(vec2 ndc) {
+    return 0.5 * ndc + 0.5;
+}
+
+// [0..1] to [-1..1]
+vec2 tex_to_ndc(vec2 tex) {
+    return 2.0 * tex - 1.0;
+}
+
+// [0..w] to [0..1]
+vec2 pixel_to_tex(ivec2 pixel, ivec2 size) {
+    // +0.5 because querying the texture using sampler we get floating pixel coordinates.
+    return (vec2(pixel) + 0.5) / vec2(size);
+}
+
+// [0..w] to [-1..1]
+vec2 pixel_to_ndc(ivec2 pixel, ivec2 size) {
+    return tex_to_ndc(pixel_to_tex(pixel, size));
+}
+
 float time_sin(float factor) {
     return sin(factor * TWO_PI * constants.time);
 }
@@ -65,6 +72,11 @@ vec2 time_sin2(float a, float b) {
         sin(a * TWO_PI * constants.time),
         cos(b * TWO_PI * constants.time)
     );
+}
+
+float linger(float t) {
+    float x = abs(fract(0.3 * t) * 2.0 - 1.0);
+    return smoothstep(0.3, 0.7, x);
 }
 
 vec2 blackhole(vec2 v) {
@@ -93,11 +105,6 @@ vec3 load_canvas(vec2 ndc, out float mask) {
 const float FLIGHT_ALPHA = 1.0;
 const float FRACTAL_ALPHA = 0.90;
 // const float FRACTAL_ALPHA = 0.6;
-
-float linger(float t) {
-    float x = abs(fract(0.3 * t) * 2.0 - 1.0);
-    return smoothstep(0.3, 0.7, x);
-}
 
 vec2 fractal(vec2 xy) {
     mat2 rot2 = rotation_2d(-0.1 * constants.time + 0.0002 * constants.cumulative_bass_energy);
@@ -136,25 +143,6 @@ vec3 load_accent(vec2 ndc) {
     return texture(accent, ndc_to_tex(ndc)).rgb;
 }
 
-// vec3 load_prev_frame_new(vec2 ndc) {
-//     float transition = 0.1 * constants.time;
-//     float bar = float(constants.beat_index >> 2);
-//     vec2 scale = 1.0 + 0.01 * time_sin2(0.3453487435, 0.987435234, bar);
-//     vec2 translate_kaleidoscope = 0.01 * time_sin2(0.293847987435, 0.234567438598, 0.0);
-//
-//     vec2 before = ndc + translate_kaleidoscope;
-//     float len_before = length(before);
-//
-//     float angle = acos(before.x / len_before) * before.y < 0 ? -1.0 : 1.0;
-//     float new_angle = fract(angle * 4) / 4;
-//
-//     vec2 after = fract(len_before) * vec2(cos(new_angle), sin(new_angle));
-//
-//     vec2 prev_coords_kaleidoscope = after;
-//     vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords_kaleidoscope)).rgb;
-//     return 0.99 * prev_color;
-// }
-
 vec3 colorshift(vec2 ndc, vec3 color) {
     return color;
     float f = dot(ndc, ndc);
@@ -168,37 +156,31 @@ void main() {
     ivec2 ipixel_coords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 iimage_size = ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
 
-    vec2 pixel_coords = vec2(ipixel_coords) + 0.0;
+    vec2 pixel_coords = vec2(ipixel_coords);
     vec2 ndc = 2.0 * pixel_coords / vec2(iimage_size) - 1.0;
     float average_size = 0.5 * float(iimage_size.x + iimage_size.y);
     vec2 ndc_aspect = vec2(iimage_size) * ndc / average_size;
 
+    // Canvas, the main image. The mask holds the surface actually filled.
     float canvas_mask;
     vec3 canvas_color = load_canvas(ndc, canvas_mask);
+
+    // Frame holds a mutable image that is updated every frame.
     vec3 frame_color = load_prev_frame(ndc);
     vec3 accent_color = load_accent(ndc);
 
     vec3 next_frame = 0.95 * (canvas_color + frame_color);
     // next_frame = colorshift(ndc, next_frame);
+    imageStore(frame, ipixel_coords, vec4(next_frame, 1));
 
+    // Present is the final output.
     vec3 next_present = canvas_color;
     next_present += (1.0 - canvas_mask) * (frame_color + accent_color);
+    imageStore(present, ipixel_coords, vec4(next_present, 1));
 
     // next_present = canvas_color;
     // next_present = fract(0.99 * next_present);
 
     // vec3 sum_color = len_canvas > 0.001 ? (len_canvas > 0.5 ? canvas_color_larger : vec3(0)) : 0.99 * prev_color;
     // vec3 sum_color2 = len_canvas > 0.5 ? canvas_color : 0.99 * prev_color;
-
-    imageStore(frame, ipixel_coords, vec4(next_frame, 1));
-    imageStore(present, ipixel_coords, vec4(next_present, 1));
-
-
-    // vec3 add_color = fract(constants.frame_index * 0.1203948230 * vec3(float(ipixel_coords.x) / iimage_size.x, float(ipixel_coords.y) / iimage_size.y, 0));
-    //
-    // if (constants.frame_index % 60 < 60) {
-    //     imageStore(present, ipixel_coords, vec4(add_color, 1));
-    // } else {
-    //     imageStore(present, ipixel_coords, vec4(load_color, 1));
-    // }
 }

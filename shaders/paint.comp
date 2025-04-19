@@ -31,19 +31,9 @@ layout(binding = 3) buffer Dft {
 } signal_dft;
 
 const float TWO_PI = 6.28318530718;
+const float PI_OVER_6 = 0.866025403;
 
-vec2 ndc_to_tex(vec2 ndc) {
-    return 0.5 * ndc + 0.5;
-}
-
-float time_sin(float factor) {
-    return sin(constants.time * factor);
-}
-
-vec2 time_sin2(float a, float b) {
-    return vec2(time_sin(a), time_sin(b));
-}
-
+// Vector functions.
 float len2(vec2 v) {
     return dot(v, v);
 }
@@ -55,6 +45,37 @@ mat2 rotation_2d(float angle) {
         c, -s,
         s,  c
     );
+}
+
+// Coordinate system conversions.
+
+// [-1..1] to [0..1]
+vec2 ndc_to_tex(vec2 ndc) {
+    return 0.5 * ndc + 0.5;
+}
+
+// [0..1] to [-1..1]
+vec2 tex_to_ndc(vec2 tex) {
+    return 2.0 * tex - 1.0;
+}
+
+// [0..w] to [0..1]
+vec2 pixel_to_tex(ivec2 pixel, ivec2 size) {
+    // +0.5 because querying the texture using sampler we get floating pixel coordinates.
+    return (vec2(pixel) + 0.5) / vec2(size);
+}
+
+// [0..w] to [-1..1]
+vec2 pixel_to_ndc(ivec2 pixel, ivec2 size) {
+    return tex_to_ndc(pixel_to_tex(pixel, size));
+}
+
+float time_sin(float factor) {
+    return sin(constants.time * factor);
+}
+
+vec2 time_sin2(float a, float b) {
+    return vec2(time_sin(a), time_sin(b));
 }
 
 vec3 neon_color(float time) {
@@ -77,16 +98,6 @@ float grid(vec2 xy, ivec2 size, ivec2 pos) {
 
     return clamp(ceil(-sdf), 0.0, 1.0);
 }
-
-// float spinner(vec2 xy, float pct) {
-// float sdArc( in vec2 p, in vec2 sc, in float ra, float rb )
-// {
-//     // sc is the sin/cos of the arc's aperture
-//     p.x = abs(p.x);
-//     return ((sc.y*p.x>sc.x*p.y) ? length(p-sc*ra) :
-//                                   abs(length(p)-ra)) - rb;
-// }
-// }
 
 float circle(vec2 xy, vec2 pos, float radius) {
     return float((len2(xy - pos) + 0.0001) < radius * radius);
