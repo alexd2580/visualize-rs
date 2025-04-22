@@ -157,7 +157,8 @@ vec3 load_prev_frame_drive(vec2 ndc, out float frame_mask) {
     beta = 1.0;
 
     float alpha_fractal;
-    vec2 ndc_fractal = ndc *= 1 * sin(transition); // 1.300; // coords_prev_fractal(ndc, alpha_fractal);
+    vec2 ndc_fractal = ndc *= 1.0 - sin(transition) / 40; // 1.300; // coords_prev_fractal(ndc, alpha_fractal);
+    ndc_fractal += 0.001;
 
     // vec2 prev_coords = mix(ndc_flight, ndc_fractal, beta);
     vec2 prev_coords = ndc_fractal;
