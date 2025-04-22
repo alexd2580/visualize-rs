@@ -151,6 +151,23 @@ vec3 load_prev_frame(vec2 ndc, out float alpha) {
     return prev_color;
 }
 
+vec3 load_prev_frame_drive(vec2 ndc, out float frame_mask) {
+    float transition = 0.05 * constants.time;
+    float beta = linger(transition);
+    beta = 1.0;
+
+    float alpha_fractal;
+    vec2 ndc_fractal = ndc *= 1 * sin(transition); // 1.300; // coords_prev_fractal(ndc, alpha_fractal);
+
+    // vec2 prev_coords = mix(ndc_flight, ndc_fractal, beta);
+    vec2 prev_coords = ndc_fractal;
+    vec3 prev_color = texture(frame_prev, ndc_to_tex(prev_coords)).rgb;
+
+    frame_mask = length(prev_color);
+
+    return prev_color;
+}
+
 vec3 load_accent(vec2 ndc) {
     return texture(accent, ndc_to_tex(ndc)).rgb;
 }
@@ -178,23 +195,26 @@ void main() {
     vec3 canvas_color = load_canvas(ndc, canvas_mask);
 
     // Frame holds a mutable image that is updated every frame.
-    float frame_alpha;
-    vec3 frame_color = load_prev_frame(ndc, frame_alpha);
-    vec3 accent_color = load_accent(ndc);
+    float frame_mask;
+    vec3 frame_color = load_prev_frame_drive(ndc, frame_mask);
+    // vec3 accent_color = load_accent(ndc);
 
-    vec3 next_frame = frame_alpha * (canvas_color + frame_color);
+    vec3 combined = canvas_color + max(0, frame_mask - canvas_mask) * frame_color;
+
+    vec3 next_frame = combined;
+    vec3 next_present = combined;
     // next_frame = colorshift(ndc, next_frame);
     imageStore(frame, ipixel_coords, vec4(next_frame, 1));
 
-    // Present is the final output.
-    vec3 next_present = canvas_color;
-    next_present += (1.0 - canvas_mask) * (frame_color + accent_color);
+    // // Present is the final output.
+    // vec3 next_present = canvas_color;
+    // next_present += (1.0 - canvas_mask) * (frame_color + accent_color);
+    //
+    // float alpha_fractal;
+    // vec2 ndc_fractal = coords_prev_fractal(ndc, alpha_fractal);
+    // vec3 prev_color = texture(frame_prev, ndc_to_tex(ndc_fractal)).rgb;
 
-    float alpha_fractal;
-    vec2 ndc_fractal = coords_prev_fractal(ndc, alpha_fractal);
-    vec3 prev_color = texture(frame_prev, ndc_to_tex(ndc_fractal)).rgb;
-
-    next_present = canvas_color + prev_color;
+    // next_present = canvas_color + prev_color;
 
     imageStore(present, ipixel_coords, vec4(next_present, 1));
 
